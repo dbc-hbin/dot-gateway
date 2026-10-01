@@ -73,12 +73,15 @@ func processValidation(parent context.Context, store *Store, rest *RESTClient, g
 		err = errors.New("validation_connection_changed")
 	}
 	if err == nil {
+		if rest.contextEnabled {
+			verified.Context = rest.resolveMessageContext(ctx, verified)
+		}
 		var outcome string
 		var promoteErr error
 		if in.Event.RouteKind == "guild_thread_candidate" {
 			outcome, promoteErr = store.promoteThreadValidation(in, verified)
 		} else {
-			outcome, promoteErr = store.PromoteValidation(in)
+			outcome, promoteErr = store.promoteContextValidation(in, verified)
 		}
 		if promoteErr == nil {
 			g.recordIngress(outcome)

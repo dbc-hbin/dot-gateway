@@ -61,7 +61,7 @@ func (p Policy) Allows(e Envelope) bool {
 	return p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
 }
 func (p Policy) Accepts(e Envelope) bool {
-	return p.Allows(e) && utf8.ValidString(e.Text) && trimText(e.Text) != "" && TextUnits(e.Text) <= 8000
+	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent()) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
 }
 
 // Stages is deliberately broader than Accepts only for hidden quarantine.

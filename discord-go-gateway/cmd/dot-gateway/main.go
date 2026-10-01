@@ -82,6 +82,7 @@ func run(args []string) int {
 	}
 	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
 	allowed["recover-thread-message"] = ""
+	allowed["materialize"] = "claim attachment"
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
 	spec, ok := allowed[cmd]
@@ -99,14 +100,14 @@ func run(args []string) int {
 	switch cmd {
 	case "recover-thread-message":
 		expected = 2
-	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent":
+	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize":
 		expected = 1
 	}
 	if len(pos) != expected {
 		output(map[string]string{"error": "invalid_arguments"})
 		return 2
 	}
-	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message", cmd == "check")
+	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message" || cmd == "materialize", cmd == "check")
 	if e != nil {
 		output(map[string]string{"error": e.Error()})
 		return 2
@@ -144,13 +145,27 @@ func run(args []string) int {
 		return d, nil
 	}
 	claim := f["claim"]
-	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore") && claim == "" {
+	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize") && claim == "" {
 		output(map[string]string{"error": "claim_required"})
 		return 2
 	}
 	var result any
 	mutated := false
 	switch cmd {
+	case "materialize":
+		if !bridge.Snowflake(f["attachment"]) {
+			e = errors.New("attachment_required")
+			break
+		}
+		var rest *bridge.RESTClient
+		rest, e = bridge.NewRESTClient(settings)
+		if e != nil {
+			break
+		}
+		defer rest.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, e = rest.MaterializeAttachment(ctx, store, pos[0], claim, f["attachment"])
 	case "recover-thread-message":
 		var rest *bridge.RESTClient
 		rest, e = bridge.NewRESTClient(settings)

@@ -30,7 +30,7 @@ type gatewayState struct {
 // remain rejected; diagnostics do not relax the admission/preflight boundary.
 func (g *gatewayState) recordIngress(outcome string) {
 	switch outcome {
-	case "accepted", "duplicate", "rejected", "queue_full", "route_lookup_failed", "route_validation_failed", "validation_staged", "validation_retry", "validation_blocked":
+	case "source_update", "source_deleted", "accepted", "duplicate", "rejected", "queue_full", "route_lookup_failed", "route_validation_failed", "validation_staged", "validation_retry", "validation_blocked":
 	default:
 		return
 	}
@@ -193,6 +193,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		return e
 	}
 	defer rest.Close()
+	rest.contextEnabled = true
 	g := &gatewayState{state: "connecting"}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -244,7 +245,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	requestValidation := func() {
 		queueGatewayValidation(validate, g.epoch.Load())
 	}
-	incoming := make(chan *discordgo.Message, 1000)
+	incoming := make(chan sourceGatewayEvent, 1000)
 	s.AddHandler(func(_ *discordgo.Session, r *discordgo.Ready) {
 		if r.User == nil || r.User.ID != settings.ExpectedBotID || !r.User.Bot {
 			fail("bot_identity_mismatch")
@@ -279,9 +280,34 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			return
 		}
 		select {
-		case incoming <- m.Message:
+		case incoming <- sourceGatewayEvent{Create: m.Message}:
 		default:
 			fail("gateway_inbound_capacity_exceeded")
+		}
+	})
+	enqueueSource := func(event sourceGatewayEvent) {
+		select {
+		case incoming <- event:
+		default:
+			fail("gateway_inbound_capacity_exceeded")
+		}
+	}
+	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageUpdate) {
+		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID) {
+			enqueueSource(sourceGatewayEvent{Update: m.Message})
+		}
+	})
+	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageDelete) {
+		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID) {
+			enqueueSource(sourceGatewayEvent{Delete: m.Message})
+		}
+	})
+	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageDeleteBulk) {
+		if m.GuildID != "" && m.GuildID != settings.Policy.GuildID {
+			return
+		}
+		for _, id := range m.Messages {
+			enqueueSource(sourceGatewayEvent{Delete: &discordgo.Message{ID: id, ChannelID: m.ChannelID, GuildID: m.GuildID}})
 		}
 	})
 	var wg sync.WaitGroup
@@ -324,8 +350,8 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			select {
 			case <-ctx.Done():
 				return
-			case m := <-incoming:
-				outcome, err := receiveMessage(ctx, rest, store, settings, m)
+			case event := <-incoming:
+				outcome, err := receiveSourceEvent(ctx, rest, store, settings, event)
 				if err != nil {
 					fail("gateway_ingest_failed")
 					return
@@ -346,9 +372,14 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	})
 	start(func() {
+		if err := messageSourceLoop(ctx, store, rest, hub, g); err != nil {
+			fail("source_refresh_failed")
+		}
+	})
+	start(func() {
 		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
-			return rest.SendGuardedMeasured(ctx, c, func() bool {
+			return rest.SendCurrentSourceMeasured(ctx, store, c, func() bool {
 				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && gatewayRoutePermissions(g, s, settings, c.Source)
 			})
 		}); err != nil {
@@ -596,7 +627,17 @@ func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Setti
 	if m == nil || m.Author == nil || m.Author.ID != s.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID) {
 		return "rejected", nil
 	}
-	event := Envelope{Platform: "discord", EventID: m.ID, ConversationID: m.ChannelID, SenderID: m.Author.ID, Text: m.Content, ReceivedAt: wall(), RouteKind: "dm", GuildID: m.GuildID, SenderIsBot: m.Author.Bot}
+	event := projectGatewayMessage(s, m)
+	if !s.Policy.Stages(event) {
+		return "rejected", nil
+	}
+	// Durable quarantine precedes all network lookup. It is deliberately separate
+	// from the consumable inbox; exact validation happens in validationLoop.
+	return store.StageIngress(event)
+}
+
+func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
+	event := Envelope{Media: ProjectMedia(m), ContentHash: MessageContentFingerprint(m), Context: projectMessageContext(m), Platform: "discord", EventID: m.ID, ConversationID: m.ChannelID, SenderID: m.Author.ID, Text: m.Content, ReceivedAt: wall(), RouteKind: "dm", GuildID: m.GuildID, SenderIsBot: m.Author.Bot}
 	if m.GuildID != "" {
 		event.RouteKind = "guild_text"
 		if m.ChannelID != s.Policy.GuildChannelID {
@@ -611,12 +652,7 @@ func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Setti
 	if m.MessageReference != nil {
 		event.ReplyToEventID = m.MessageReference.MessageID
 	}
-	if !s.Policy.Stages(event) {
-		return "rejected", nil
-	}
-	// Durable quarantine precedes all network lookup. It is deliberately separate
-	// from the consumable inbox; exact validation happens in validationLoop.
-	return store.StageIngress(event)
+	return event
 }
 
 // Drain immediately after each acknowledgement. A maintenance timer only covers

@@ -48,19 +48,29 @@ func (s *Store) StageIngress(e Envelope) (string, error) {
 	}
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			known, err := sourceKnownDB(db, e)
+			if err != nil {
+				return nil, err
+			}
+			if known {
+				return "duplicate", nil
+			}
 			var n int
-			if err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)`, e.Platform, e.EventID, e.Platform, e.EventID).Scan(&n); err != nil {
+			if err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)`, e.Platform, sourceLedgerKey(e), e.Platform, sourceLedgerKey(e)).Scan(&n); err != nil {
 				return nil, err
 			}
 			if n != 0 {
 				return "duplicate", nil
 			}
-			n, err := activeInboundCount(db)
+			n, err = activeInboundCount(db)
 			if err != nil {
 				return nil, err
 			}
 			if n >= 1000 {
 				return "queue_full", nil
+			}
+			if err = registerSourceDB(db, e); err != nil {
+				return nil, err
 			}
 			id, err := uuidHex()
 			if err != nil {
@@ -70,7 +80,7 @@ func (s *Store) StageIngress(e Envelope) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			_, err = db.Exec(`INSERT INTO ingress_validation(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, id, e.Platform, e.EventID, string(raw), epoch())
+			_, err = db.Exec(`INSERT INTO ingress_validation(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, id, e.Platform, sourceLedgerKey(e), string(raw), epoch())
 			return "validation_staged", err
 		})
 	})
@@ -87,7 +97,7 @@ func (s *Store) NextValidation(now float64) (*ValidationInput, error) {
 		// A deferred/blocked conversation cannot hold up another conversation.
 		// Within a conversation, later events may not overtake unvalidated work.
 		err := db.QueryRow(`SELECT v.id,v.envelope,v.created,v.attempts FROM ingress_validation v
-			WHERE v.state='pending' AND v.next_attempt<=? AND NOT EXISTS(
+			WHERE v.state='pending' AND v.next_attempt<=? AND NOT EXISTS(SELECT 1 FROM message_sources src WHERE src.platform=v.platform AND src.event_id=json_extract(v.envelope,'$.event_id') AND (src.state!='current' OR src.revision!=COALESCE(json_extract(v.envelope,'$.source_revision'),0))) AND NOT EXISTS(
 				SELECT 1 FROM ingress_validation older WHERE older.state IN ('pending','blocked') AND older.platform=v.platform
 				AND json_extract(older.envelope,'$.conversation_id')=json_extract(v.envelope,'$.conversation_id')
 				AND (older.created<v.created OR (older.created=v.created AND older.rowid<v.rowid)))
@@ -115,7 +125,8 @@ func (s *Store) DeferValidation(id, code string, until float64, blocked bool) er
 		state = "blocked"
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
-		return nil, changedOne(db.Exec(`UPDATE ingress_validation SET state=?,attempts=attempts+1,next_attempt=?,code=? WHERE id=? AND state='pending'`, state, until, symbolicCode(code), id))
+		_, err := db.Exec(`UPDATE ingress_validation SET state=?,attempts=attempts+1,next_attempt=?,code=? WHERE id=? AND state='pending'`, state, until, symbolicCode(code), id)
+		return nil, err
 	})
 	return err
 }
@@ -125,6 +136,20 @@ func (s *Store) DeferValidation(id, code string, until float64, blocked bool) er
 func (s *Store) rejectValidation(id string) error {
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			var raw, state string
+			if err := db.QueryRow(`SELECT envelope,state FROM ingress_validation WHERE id=?`, id).Scan(&raw, &state); err != nil {
+				return nil, err
+			}
+			if state != "pending" {
+				return nil, nil
+			}
+			var source Envelope
+			if json.Unmarshal([]byte(raw), &source) != nil {
+				return nil, errors.New("invalid quarantined envelope")
+			}
+			if _, err := db.Exec(`DELETE FROM message_sources WHERE platform=? AND event_id=? AND revision=? AND state!='deleted'`, source.Platform, source.EventID, source.SourceRevision); err != nil {
+				return nil, err
+			}
 			if err := changedOne(db.Exec(`UPDATE ingress_validation SET state='rejected',envelope='{}',code='out_of_scope' WHERE id=? AND state='pending'`, id)); err != nil {
 				return nil, err
 			}
@@ -154,8 +179,18 @@ func (s *Store) PromoteValidation(in ValidationInput) (string, error) {
 // original message identity, channel, sender, content and receipt time stay bound.
 func (s *Store) promoteThreadValidation(in ValidationInput, verified Envelope) (string, error) {
 	original := verified
+	original.Context = in.Event.Context
 	original.RouteKind, original.ParentChannelID, original.ThreadType, original.ThreadName = "guild_thread_candidate", "", 0, ""
 	if in.Event.RouteKind != "guild_thread_candidate" || original != in.Event || verified.RouteKind != "guild_thread" || !s.policy.Accepts(verified) {
+		return "", errors.New("validation_input_changed")
+	}
+	return s.promoteValidation(in, &verified)
+}
+
+func (s *Store) promoteContextValidation(in ValidationInput, verified Envelope) (string, error) {
+	original := verified
+	original.Context = in.Event.Context
+	if original != in.Event {
 		return "", errors.New("validation_input_changed")
 	}
 	return s.promoteValidation(in, &verified)
@@ -173,6 +208,13 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 			if json.Unmarshal([]byte(raw), &event) != nil {
 				return nil, errors.New("invalid quarantined envelope")
 			}
+			current, err := sourceCurrentDB(db, event)
+			if err != nil {
+				return nil, err
+			}
+			if !current || state == "superseded" {
+				return "superseded", nil
+			}
 			if state != "pending" || event != in.Event || created != in.Created {
 				return nil, errors.New("validation_input_changed")
 			}
@@ -184,18 +226,23 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 				}
 				raw = string(encoded)
 			}
+			// Retain the verified route/context in the current head for exact
+			// refreshes; the inbound revision snapshot is still never mutated.
+			if _, err = db.Exec(`UPDATE message_sources SET envelope=? WHERE platform=? AND event_id=? AND revision=? AND state='current'`, raw, event.Platform, event.EventID, event.SourceRevision); err != nil {
+				return nil, err
+			}
 			if !s.policy.Accepts(event) {
 				_, err := db.Exec(`UPDATE ingress_validation SET state='blocked',code='authorization_revoked' WHERE id=?`, in.ID)
 				return "validation_blocked", err
 			}
 			var n int
-			if err := db.QueryRow(`SELECT count(*) FROM inbound WHERE platform=? AND event_id=?`, event.Platform, event.EventID).Scan(&n); err != nil {
+			if err := db.QueryRow(`SELECT count(*) FROM inbound WHERE platform=? AND event_id=?`, event.Platform, sourceLedgerKey(event)).Scan(&n); err != nil {
 				return nil, err
 			}
 			outcome := "duplicate"
 			if n == 0 {
 				// Staging reserved capacity; promotion does not admit another item.
-				if _, err := db.Exec(`INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, in.ID, event.Platform, event.EventID, raw, created); err != nil {
+				if _, err := db.Exec(`INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, in.ID, event.Platform, sourceLedgerKey(event), raw, created); err != nil {
 					return nil, err
 				}
 				if err := insertTiming(db, in.ID, "ingested", epoch(), epoch()-created); err != nil {
@@ -203,7 +250,7 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 				}
 				outcome = "accepted"
 			}
-			_, err := db.Exec(`DELETE FROM ingress_validation WHERE id=?`, in.ID)
+			_, err = db.Exec(`DELETE FROM ingress_validation WHERE id=?`, in.ID)
 			return outcome, err
 		})
 	})

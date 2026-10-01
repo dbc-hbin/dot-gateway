@@ -45,6 +45,22 @@ validation. Replies and feedback stay in the thread. See [thread routing and
 point-message recovery](THREAD_ROUTING.md) for exact scope, lifecycle restrictions
 and the unavoidable Discord final-GET-to-POST archive race.
 
+## Inbound media
+
+Owner attachments, native voice messages, stickers, embeds, polls and forwards now
+reach `next` as bounded, explicitly untrusted metadata. Media-only messages pass
+the existing exact owner/route gate. Supported original attachments can be fetched
+with the explicit live claim-bound `materialize` command; the consumer must open
+the returned private file to interpret it. See [the media contract](MEDIA_CONTRACT.md)
+for limits, security boundaries, invocation and unsupported types.
+
+## Source edits, deletion and context
+
+Message updates revoke stale claims and are refreshed from their exact authorized
+source. Deletions leave durable tombstones and retire definitely unsent work;
+ambiguous sends remain held. Bounded quoted and thread-starter context carries
+explicit untrusted provenance. See [source revisions](SOURCE_REVISIONS.md).
+
 ## Components
 
 - DiscordGo handles Gateway protocol/state only. Its REST send/reconnect helpers
@@ -113,7 +129,7 @@ token, live database or Discord endpoint.
 The original `DISCORD_OWNER_ID`, `DISCORD_ALLOWED_DM_IDS`, pinned bot/guild/channel,
 guild mode, approved Message Content, `BRIDGE_DB`, HTTP keepalive and explicit
 credential-free proxy environment settings are retained. Only live `gateway`
-(alias `run-discord`) and explicit `recover-thread-message` load
+(alias `run-discord`), explicit `recover-thread-message`, and `materialize` load
 `DISCORD_BOT_TOKEN_FILE`. Offline CLI commands never
 need credentials or connect to Discord. The token loader rejects symlinks,
 nonregular files, foreign ownership and any group/other permission.

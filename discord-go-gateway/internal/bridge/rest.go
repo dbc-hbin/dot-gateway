@@ -206,6 +206,7 @@ func (b *measuredResponseBody) Close() error {
 }
 
 type RESTClient struct {
+	contextEnabled  bool
 	settings        Settings
 	client          *http.Client
 	baseURL         string
@@ -293,6 +294,9 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 	req.Header.Set("User-Agent", "DotTextBridge/1.0 (Go)")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if guard, ok := ctx.Value(sendGuardContextKey{}).(func() bool); ok && !guard() {
+		return nil, errSendGuardChanged
 	}
 	measurement.update(func() { measurement.metrics.Attempted = true })
 	resp, err := r.client.Do(req)

@@ -147,3 +147,21 @@ func TestCLICheckNeverNeedsTokenOrNetwork(t *testing.T) {
 		t.Fatal(r, e)
 	}
 }
+
+func TestCLIMaterializeIsExplicitLiveCommand(t *testing.T) {
+	_, env := cliFixture(t)
+	// No inherited environment or real credential. Offline next succeeds without
+	// a token; explicit materialize refuses before any network operation.
+	response, err := cli(t, env, "", "next")
+	if err != nil {
+		t.Fatal(response, err)
+	}
+	response, err = cli(t, env, "", "materialize", "inbound", "--claim", "claim", "--attachment", "7")
+	if err == nil || response["error"] != "secure_bot_token_required" {
+		t.Fatal(response, err)
+	}
+	response, err = cli(t, env, "", "materialize", "inbound", "--claim", "claim", "--url", "https://example.org/file")
+	if err == nil || response["error"] != "unknown_flag" {
+		t.Fatal(response, err)
+	}
+}

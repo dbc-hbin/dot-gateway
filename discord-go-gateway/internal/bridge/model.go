@@ -8,17 +8,21 @@ import (
 
 // Envelope is a value snapshot. Strings avoid shared mutable routing state.
 type Envelope struct {
-	Platform       string  `json:"platform"`
-	EventID        string  `json:"event_id"`
-	ConversationID string  `json:"conversation_id"`
-	SenderID       string  `json:"sender_id"`
-	Text           string  `json:"text"`
-	ReceivedAt     float64 `json:"received_at"`
-	RouteKind      string  `json:"route_kind"`
-	ReplyToEventID string  `json:"reply_to_event_id,omitempty"`
-	SenderIsBot    bool    `json:"sender_is_bot"`
-	GuildID        string  `json:"guild_id,omitempty"`
-	BotMentioned   bool    `json:"bot_mentioned"`
+	SourceRevision int64           `json:"source_revision,omitempty"`
+	Context        ContextSnapshot `json:"context,omitempty"`
+	Platform       string          `json:"platform"`
+	EventID        string          `json:"event_id"`
+	ConversationID string          `json:"conversation_id"`
+	SenderID       string          `json:"sender_id"`
+	Text           string          `json:"text"`
+	Media          MediaSnapshot   `json:"media,omitempty"`
+	ContentHash    string          `json:"content_hash,omitempty"`
+	ReceivedAt     float64         `json:"received_at"`
+	RouteKind      string          `json:"route_kind"`
+	ReplyToEventID string          `json:"reply_to_event_id,omitempty"`
+	SenderIsBot    bool            `json:"sender_is_bot"`
+	GuildID        string          `json:"guild_id,omitempty"`
+	BotMentioned   bool            `json:"bot_mentioned"`
 	// Set only by durable promotion after fresh REST thread/parent validation.
 	ParentChannelID string `json:"parent_channel_id,omitempty"`
 	ThreadType      int    `json:"thread_type,omitempty"`

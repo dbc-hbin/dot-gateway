@@ -252,6 +252,9 @@ CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 		if err = initIngressValidation(db); err != nil {
 			return nil, err
 		}
+		if err = initMessageSources(db); err != nil {
+			return nil, err
+		}
 		if had == 0 {
 			_, err = db.Exec(`INSERT OR IGNORE INTO feedback SELECT i.id,'history' FROM inbound i WHERE i.state IN ('ignored','blocked') OR (i.state='replied' AND NOT EXISTS(SELECT 1 FROM chunks c JOIN replies r ON r.id=c.reply_id WHERE r.inbound_id=i.id AND c.state IN ('pending','sending')))`)
 		}
@@ -270,19 +273,29 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 	}
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			known, err := sourceKnownDB(db, e)
+			if err != nil {
+				return nil, err
+			}
+			if known {
+				return "duplicate", nil
+			}
 			var n int
-			if err := db.QueryRow("SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)", e.Platform, e.EventID, e.Platform, e.EventID).Scan(&n); err != nil {
+			if err := db.QueryRow("SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)", e.Platform, sourceLedgerKey(e), e.Platform, sourceLedgerKey(e)).Scan(&n); err != nil {
 				return nil, err
 			}
 			if n > 0 {
 				return "duplicate", nil
 			}
-			n, err := activeInboundCount(db)
+			n, err = activeInboundCount(db)
 			if err != nil {
 				return nil, err
 			}
 			if n >= 1000 {
 				return "queue_full", nil
+			}
+			if err = registerSourceDB(db, e); err != nil {
+				return nil, err
 			}
 			id, err := uuidHex()
 			if err != nil {
@@ -292,7 +305,7 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			_, err = db.Exec("INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)", id, e.Platform, e.EventID, string(raw), epoch())
+			_, err = db.Exec("INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)", id, e.Platform, sourceLedgerKey(e), string(raw), epoch())
 			if err == nil {
 				err = insertTiming(db, id, "ingested", epoch(), 0)
 			}
@@ -403,7 +416,14 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 				if err != nil {
 					return nil, err
 				}
-				if len(owned) == 1 && s.policy.Accepts(owned[0].event) {
+				ownedCurrent := false
+				if len(owned) == 1 {
+					ownedCurrent, err = sourceCurrentDB(db, owned[0].event)
+					if err != nil {
+						return nil, err
+					}
+				}
+				if len(owned) == 1 && ownedCurrent && s.policy.Accepts(owned[0].event) {
 					r := owned[0]
 					return &Claim{r.id, r.claim, r.lease, "untrusted_message_text", r.event}, nil
 				}
@@ -429,6 +449,13 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					break
 				}
 				for _, r := range rows {
+					current, err := sourceCurrentDB(db, r.event)
+					if err != nil {
+						return nil, err
+					}
+					if !current {
+						continue
+					}
 					if !s.policy.Accepts(r.event) {
 						if _, err = db.Exec("UPDATE inbound SET state='blocked',claim=NULL WHERE id=?", r.id); err != nil {
 							return nil, err
@@ -549,6 +576,13 @@ func (s *Store) QueueReply(id, claim, text string) (string, error) {
 			if len(rows) == 0 || !s.policy.Accepts(rows[0].event) {
 				return nil, errors.New("unknown or no longer authorized inbound message")
 			}
+			current, err := sourceCurrentDB(db, rows[0].event)
+			if err != nil {
+				return nil, err
+			}
+			if !current {
+				return nil, ErrClaim
+			}
 			var existing, oldText string
 			err = db.QueryRow("SELECT id,text FROM replies WHERE inbound_id=?", id).Scan(&existing, &oldText)
 			if err == nil {
@@ -644,6 +678,13 @@ func (s *Store) NextChunk() (*Chunk, error) {
 				return nil, err
 			}
 			for _, c := range chunks {
+				current, err := sourceCurrentDB(db, c.Source)
+				if err != nil {
+					return nil, err
+				}
+				if !current {
+					continue
+				}
 				if !s.policy.Allows(c.Source) {
 					if _, err = db.Exec("UPDATE chunks SET state='failed',code='authorization_revoked' WHERE reply_id=? AND state='pending'", c.ReplyID); err != nil {
 						return nil, err
@@ -703,6 +744,12 @@ func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement
 				if err == ErrClaim {
 					err = errors.New("chunk is not in sending state")
 				}
+				return nil, err
+			}
+			if err = restoreCurrentSourceResultDB(db, c, r); err != nil {
+				return nil, err
+			}
+			if err = cancelStaleReplyAfterResultDB(db, c); err != nil {
 				return nil, err
 			}
 			var id string
@@ -812,11 +859,24 @@ func (s *Store) ResolveSent(id string, index int, messageID string) error {
 		return errors.New("a verified remote message ID is required")
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
-		err := changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, id, index))
-		if err == ErrClaim {
-			err = errors.New("only uncertain chunks can be resolved")
-		}
-		return nil, err
+		return transact(db, func(db *storeConn) (any, error) {
+			err := changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, id, index))
+			if err == ErrClaim {
+				err = errors.New("only uncertain chunks can be resolved")
+			}
+			if err == nil {
+				var raw string
+				err = db.QueryRow(`SELECT i.envelope FROM replies r JOIN inbound i ON i.id=r.inbound_id WHERE r.id=?`, id).Scan(&raw)
+				if err == nil {
+					var e Envelope
+					if json.Unmarshal([]byte(raw), &e) != nil {
+						return nil, errors.New("invalid source envelope")
+					}
+					err = cancelStaleReplyAfterResultDB(db, Chunk{ReplyID: id, Index: index, Source: e})
+				}
+			}
+			return nil, err
+		})
 	})
 	return err
 }
@@ -839,7 +899,12 @@ func (s *Store) FeedbackRows() ([]FeedbackRow, error) {
 					rows.Close()
 					return nil, errors.New("invalid stored envelope")
 				}
-				if s.policy.Accepts(r.Event) {
+				current, er := sourceCurrentDB(db, r.Event)
+				if er != nil {
+					rows.Close()
+					return nil, er
+				}
+				if current && s.policy.Accepts(r.Event) {
 					out = append(out, r)
 				}
 			}
