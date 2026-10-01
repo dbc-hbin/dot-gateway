@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "os": "linux",
+  "arch": "amd64",
+  "go": "go1.27.1",
+  "node": "v24.19.0",
+  "npm": "11.9.0",
+  "playwright": "1.63.0",
+  "chromium": "151.0.7922.173",
+  "browser_mode": "real graphical desktop, headed, sandbox enabled",
+  "dependency_lockfiles": ["../discord-go-gateway/go.mod", "../discord-go-gateway/go.sum", "../insane-search-migration/go.mod", "../insane-search-migration/go.sum", "../insane-search-migration/runtime/browser/package-lock.json"],
+  "note": "Recorded reproducibility baseline, not a promise that every official distribution still provides these versions. Verify official download checksums and review security updates before production. No toolchain binary or browser profile is archived."
+}

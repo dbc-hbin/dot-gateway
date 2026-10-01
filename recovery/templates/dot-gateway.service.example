@@ -1,0 +1,22 @@
+# INERT TEMPLATE. Current VM has no running systemd and cannot use this unit.
+# On a compatible future host, substitute absolute paths and review first.
+[Unit]
+Description=Approved Discord Go gateway
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!@STATE_ROOT@/RECOVERY_BLOCK.json
+
+[Service]
+Type=simple
+UMask=0077
+WorkingDirectory=@SOURCE_ROOT@/discord-go-gateway
+ExecStart=/bin/sh @SOURCE_ROOT@/deployment/launch-gateway.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=true
+# Put credential-free approved proxy routing here only if required.
+# Never put a Discord token in this file or Environment=.
+
+[Install]
+WantedBy=default.target

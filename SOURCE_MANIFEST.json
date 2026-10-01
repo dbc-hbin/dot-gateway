@@ -1022,6 +1022,96 @@
       "sha256": "185fa099f42bc3fd02ef709ed436bcad060b99c23ace41e5115e9d4ce6a67313"
     },
     {
+      "path": "recovery/README.ko.md",
+      "bytes": 16163,
+      "sha256": "310c6d7d1402da3f6c8d37b844acd72c05567dad6acd7209989ff0c575b6ed65"
+    },
+    {
+      "path": "recovery/TOOLCHAIN.lock.json",
+      "bytes": 732,
+      "sha256": "ccabadc56ae61e6f350b8730e83b0542edbf2d9d4c532d3783cdaf29e8cbd6bf"
+    },
+    {
+      "path": "recovery/activation.go",
+      "bytes": 8403,
+      "sha256": "ae461df4c551123ac30f280490477044e343889c2ec21773ae21803337c27e71"
+    },
+    {
+      "path": "recovery/build.sh",
+      "bytes": 2431,
+      "sha256": "6c058a31dc0dbef9e59f85a7305949be05090cb5167f7f4e626fb9a8d29d3dfc"
+    },
+    {
+      "path": "recovery/configure.go",
+      "bytes": 5766,
+      "sha256": "fb6d51dd0a7c918a06455d26be1570f39e6e7f81cd086e3f923c70f6a7f3c8e5"
+    },
+    {
+      "path": "recovery/fs.go",
+      "bytes": 5899,
+      "sha256": "c5dbfdd94f5e4c8b4b45b1faa3b2c3c833df424437025f3f18ec672a4a173d5e"
+    },
+    {
+      "path": "recovery/go.mod",
+      "bytes": 568,
+      "sha256": "a8c4da2575fbf09727059ad5019466d2b73568b04016820d11001a4bdf29e66b"
+    },
+    {
+      "path": "recovery/go.sum",
+      "bytes": 4081,
+      "sha256": "b4cd8ca85cebbb7db63cfc66aa00ec7752b57fdf769d97ed9cfc2f9bbdeb654d"
+    },
+    {
+      "path": "recovery/health.go",
+      "bytes": 3618,
+      "sha256": "dc744459389a99f8654af8454a31f53cebe918892e7928fe9428a2c961cdb7ba"
+    },
+    {
+      "path": "recovery/main.go",
+      "bytes": 5346,
+      "sha256": "811f2b7ee83def3bcba5593e3cdf38651b88a6df6aff2861d564886e04e6a9f8"
+    },
+    {
+      "path": "recovery/recovery_test.go",
+      "bytes": 12690,
+      "sha256": "46bfb3accf688d7b1834f0719c42c649715604e6abda0856fea36c9b1257b9aa"
+    },
+    {
+      "path": "recovery/source.go",
+      "bytes": 5010,
+      "sha256": "baba5fe4d3b502faffb0f154cc4f962a8842fdd09031d040342a14dba086b713"
+    },
+    {
+      "path": "recovery/state.go",
+      "bytes": 19265,
+      "sha256": "15b08523d2a7fbd4c4013438447bb1592c9c81bca82bc8c59a8c94e0d1c12072"
+    },
+    {
+      "path": "recovery/templates/ACTIVATION.example.json",
+      "bytes": 599,
+      "sha256": "0beb0b969b22d6c9d474a35c2557853af856df7e386ecc777f093fc19515ad8d"
+    },
+    {
+      "path": "recovery/templates/dot-gateway.service.example",
+      "bytes": 688,
+      "sha256": "a54fec6e12249dac4a09c9b78cf98a59d45965fd9f02ba6b9e413077b5dadeea"
+    },
+    {
+      "path": "recovery/templates/dot-headed.service.example",
+      "bytes": 666,
+      "sha256": "a6db675419d201fa3b5f856433c01abd09f61965c6b17ce49548868d8e3e5635"
+    },
+    {
+      "path": "recovery/templates/operation.example.json",
+      "bytes": 259,
+      "sha256": "50b6e87777e35ecedbdada6e57ec9b1031530cb9908912be64369190904f9bd7"
+    },
+    {
+      "path": "recovery/templates/proxy.example.json",
+      "bytes": 121,
+      "sha256": "37d353dec64707438db4007d89af2f9e413ed2bc2ecb85336bab276d77650a0e"
+    },
+    {
       "path": "third-party-notices/CPython-3.12-LICENSE.txt",
       "bytes": 13936,
       "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"

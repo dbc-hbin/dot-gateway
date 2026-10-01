@@ -1,0 +1,9 @@
+{
+  "owner_id": "100000000000000005",
+  "bot_id": "100000000000000001",
+  "guild_id": "100000000000000002",
+  "gateway_channel_id": "100000000000000004",
+  "report_channel_id": "100000000000000003",
+  "guild_mode": "all",
+  "message_content_approved": true
+}

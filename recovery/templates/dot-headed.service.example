@@ -1,0 +1,20 @@
+# INERT TEMPLATE. Only a real logged-in graphical session is supported.
+# DISPLAY/WAYLAND_DISPLAY must come from that session; never invent a display.
+[Unit]
+Description=Approved headed Playwright browser worker
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=!@STATE_ROOT@/RECOVERY_BLOCK.json
+
+[Service]
+Type=simple
+UMask=0077
+WorkingDirectory=@SOURCE_ROOT@/insane-search-migration/runtime/browser
+ExecStart=/bin/sh @SOURCE_ROOT@/deployment/launch-headed.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+# Keep Chromium sandbox enabled. Do not add --no-sandbox or headless flags.
+
+[Install]
+WantedBy=graphical-session.target
