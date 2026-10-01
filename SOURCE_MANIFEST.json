@@ -1722,6 +1722,11 @@
       "sha256": "b4cd8ca85cebbb7db63cfc66aa00ec7752b57fdf769d97ed9cfc2f9bbdeb654d"
     },
     {
+      "path": "recovery/google_support_locale_test.go",
+      "bytes": 3122,
+      "sha256": "8c416563498bc099800d7f7cabc47218d8d65140e7f02482be1d9c16a93cf199"
+    },
+    {
       "path": "recovery/health.go",
       "bytes": 3618,
       "sha256": "dc744459389a99f8654af8454a31f53cebe918892e7928fe9428a2c961cdb7ba"
@@ -1748,8 +1753,8 @@
     },
     {
       "path": "recovery/operations.go",
-      "bytes": 17169,
-      "sha256": "f934f64ffd18dedfaf02be3a8654750aadf338265ecefa2f3b1346c75bd2d0ad"
+      "bytes": 17564,
+      "sha256": "7209b220119f8fc0449b0fdefc421f9c1745bb628cb02b00cc49ca2389d32fc3"
     },
     {
       "path": "recovery/operations_test.go",

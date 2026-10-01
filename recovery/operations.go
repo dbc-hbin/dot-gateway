@@ -147,6 +147,11 @@ func metadataURL(s string) bool {
 	if u.RawQuery == "" {
 		return true
 	}
+	// One reviewed public article locale selector; never a generic query exception.
+	if u.Host == "support.google.com" && u.RawPath == "" && regexp.MustCompile(`^/googleone/answer/[1-9][0-9]{0,19}$`).MatchString(u.Path) {
+		q, err := url.ParseQuery(u.RawQuery)
+		return err == nil && len(q) == 1 && len(q["hl"]) == 1 && q.Get("hl") == "ko" && u.RawQuery == "hl=ko" && !strings.Contains(s, "#")
+	}
 	if u.Host != "gall.dcinside.com" || (u.Path != "/mgallery/board/view/" && u.Path != "/mgallery/board/view") {
 		return false
 	}
