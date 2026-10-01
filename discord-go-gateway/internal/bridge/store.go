@@ -58,7 +58,10 @@ type FeedbackRow struct {
 }
 
 // storeConn pins the actor to one SQLite connection, including explicit transactions.
-type storeConn struct{ conn *sql.Conn }
+type storeConn struct {
+	conn *sql.Conn
+	path string
+}
 
 func (c *storeConn) Exec(q string, args ...any) (sql.Result, error) {
 	return c.conn.ExecContext(context.Background(), q, args...)
@@ -172,7 +175,7 @@ func (s *Store) run(path string, ready chan error) {
 		ready <- connErr
 		return
 	}
-	owned := &storeConn{conn: conn}
+	owned := &storeConn{conn: conn, path: path}
 	if err = initializeStore(owned); err != nil {
 		conn.Close()
 		db.Close()
@@ -211,7 +214,7 @@ func (s *Store) Close() error {
 	<-s.done
 	return s.closeErr
 }
-func transact(db *storeConn, fn func(*storeConn) (any, error)) (any, error) {
+func transact(db *storeConn, fn func(*storeConn) (any, error), guards ...func(*storeConn) error) (any, error) {
 	if _, err := db.Exec("BEGIN IMMEDIATE"); err != nil {
 		return nil, err
 	}
@@ -219,6 +222,14 @@ func transact(db *storeConn, fn func(*storeConn) (any, error)) (any, error) {
 	v, err := fn(db)
 	if err != nil {
 		return nil, err
+	}
+	if err = sealCatchupDB(db); err != nil {
+		return nil, err
+	}
+	for _, guard := range guards {
+		if err = guard(db); err != nil {
+			return nil, err
+		}
 	}
 	if _, err = db.Exec("COMMIT"); err != nil {
 		return nil, err
@@ -255,10 +266,19 @@ CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 		if err != nil {
 			return nil, err
 		}
+		if err = initMessageOperations(db); err != nil {
+			return nil, err
+		}
 		if err = initControlStore(db); err != nil {
 			return nil, err
 		}
 		if err = initIngressValidation(db); err != nil {
+			return nil, err
+		}
+		if err = initReadRouteRegistry(db); err != nil {
+			return nil, err
+		}
+		if err = initCatchup(db); err != nil {
 			return nil, err
 		}
 		if err = initMessageSources(db); err != nil {
@@ -288,21 +308,29 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 				return nil, err
 			}
 			if known {
-				return "duplicate", nil
+				return "duplicate", catchupLiveProgressDB(db, e, "duplicate")
 			}
 			var n int
 			if err := db.QueryRow("SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)", e.Platform, sourceLedgerKey(e), e.Platform, sourceLedgerKey(e)).Scan(&n); err != nil {
 				return nil, err
 			}
 			if n > 0 {
-				return "duplicate", nil
+				return "duplicate", catchupLiveProgressDB(db, e, "duplicate")
 			}
 			n, err = activeInboundCount(db)
 			if err != nil {
 				return nil, err
 			}
-			if n >= 1000 {
-				return "queue_full", nil
+			capacity := 1000
+			enabled, err := catchupEnabledDB(db)
+			if err != nil {
+				return nil, err
+			}
+			if enabled {
+				capacity = catchupLiveCapacity
+			}
+			if n >= capacity {
+				return "queue_full", catchupLiveProgressDB(db, e, "queue_full")
 			}
 			if err = registerSourceDB(db, e); err != nil {
 				return nil, err
@@ -319,6 +347,12 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 			if err == nil {
 				memoryBestEffort(db, func() error { return rememberInboundDB(db, id, e) })
 				err = insertTiming(db, id, "ingested", epoch(), 0)
+			}
+			if err == nil {
+				err = catchupLiveProgressDB(db, e, "accepted")
+			}
+			if err == nil {
+				err = rememberReadRouteDB(db, e)
 			}
 			return "accepted", err
 		})
@@ -460,6 +494,20 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					break
 				}
 				for _, r := range rows {
+					fenced, err := catchupFencedDB(db, r.event)
+					if err != nil {
+						return nil, err
+					}
+					if fenced {
+						continue
+					}
+					earlier, err := catchupEarlierPendingDB(db, r.event, now)
+					if err != nil {
+						return nil, err
+					}
+					if earlier {
+						continue
+					}
 					current, err := sourceCurrentDB(db, r.event)
 					if err != nil {
 						return nil, err

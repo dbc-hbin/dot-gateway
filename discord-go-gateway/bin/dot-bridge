@@ -2,7 +2,7 @@
 # Credential-free consumer entry point. No Python interpreter on the hot path.
 set -eu
 case "${1-}" in
-  next|reply|reply-output-dir|prune-reply-spool|renew|begin|ignore|bind-response|delivery|status|check|retry-failed|cancel-reply|resolve-sent|test-send-status|diagnostic-send|diagnostic-status|memory-search|memory-put|memory-get|memory-forget|memory-backfill|memory-export|memory-import) ;;
+  next|reply|reply-output-dir|prune-reply-spool|renew|begin|ignore|bind-response|delivery|status|catchup-status|check|retry-failed|cancel-reply|resolve-sent|test-send-status|diagnostic-send|diagnostic-status|memory-search|memory-put|memory-get|memory-forget|memory-backfill|memory-export|memory-import) ;;
   *) printf '%s\n' '{"error":"unsupported_offline_command"}'; exit 2 ;;
 esac
 export DISCORD_OWNER_ID=100000000000000005

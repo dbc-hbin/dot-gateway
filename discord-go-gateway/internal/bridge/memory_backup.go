@@ -423,18 +423,36 @@ func importMemoryRecordDB(db *storeConn, policy StorePolicy, record memoryBackup
 			return false, errors.New("memory_backup_source_missing")
 		}
 	case "assistant":
-		var index int
-		if _, err := fmt.Sscanf(item.DocumentID, "assistant:"+item.ReplyID+":%d", &index); err != nil || item.ReplyID == "" || index < 0 || fmt.Sprintf("assistant:%s:%d", item.ReplyID, index) != item.DocumentID {
-			return false, errors.New("invalid_memory_backup_document")
+		if operationID, edited := operationIDFromMemoryKey(item.DocumentID); edited {
+			var snapshot, channel string
+			if err := db.QueryRow(`SELECT r.snapshot,r.created,o.channel,o.message FROM message_edit_revisions r JOIN message_operations o ON o.id=r.operation_id WHERE o.id=? AND o.state='verified' AND json_extract(o.spec,'$.action')='edit_text'`, operationID).Scan(&snapshot, &at, &channel, &remote); err != nil {
+				return false, errors.New("memory_backup_edit_evidence_missing")
+			}
+			var snap operationSnapshot
+			if json.Unmarshal([]byte(snapshot), &snap) != nil {
+				return false, errors.New("memory_backup_edit_evidence_missing")
+			}
+			c, _, err := operationOwnedChunkDB(db, channel, remote)
+			if err != nil || c.ReplyID != item.ReplyID || remote != item.RemoteMessageID {
+				return false, errors.New("memory_backup_edit_evidence_missing")
+			}
+			raw = operationJSON(c.Source)
+			body = snap.Content
+			reply = c.ReplyID
+		} else {
+			var index int
+			if _, err := fmt.Sscanf(item.DocumentID, "assistant:"+item.ReplyID+":%d", &index); err != nil || item.ReplyID == "" || index < 0 || fmt.Sprintf("assistant:%s:%d", item.ReplyID, index) != item.DocumentID {
+				return false, errors.New("invalid_memory_backup_document")
+			}
+			var state string
+			if err := db.QueryRow(`SELECT i.envelope,c.text,c.state,COALESCE(c.message_id,''),r.created FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.reply_id=? AND c.idx=?`, item.ReplyID, index).Scan(&raw, &body, &state, &remote, &at); err != nil {
+				return false, errors.New("memory_backup_source_missing")
+			}
+			if state != "sent" || remote == "" {
+				return false, nil
+			}
+			reply = item.ReplyID
 		}
-		var state string
-		if err := db.QueryRow(`SELECT i.envelope,c.text,c.state,COALESCE(c.message_id,''),r.created FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.reply_id=? AND c.idx=?`, item.ReplyID, index).Scan(&raw, &body, &state, &remote, &at); err != nil {
-			return false, errors.New("memory_backup_source_missing")
-		}
-		if state != "sent" || remote == "" {
-			return false, nil
-		}
-		reply = item.ReplyID
 	default:
 		return false, errors.New("invalid_memory_backup_role")
 	}
@@ -563,20 +581,32 @@ func importHistoricalMemoryRecordDB(db *storeConn, policy StorePolicy, record me
 			return false, errors.New("memory_backup_recovery_source_mismatch")
 		}
 	case "assistant":
-		var index int
-		prefix := "assistant:" + item.ReplyID + ":"
-		if !strings.HasPrefix(item.DocumentID, prefix) || item.ReplyID == "" {
-			return false, errors.New("invalid_memory_backup_document")
-		}
-		if _, err = fmt.Sscanf(strings.TrimPrefix(item.DocumentID, prefix), "%d", &index); err != nil || fmt.Sprintf("%s%d", prefix, index) != item.DocumentID || index < 0 {
-			return false, errors.New("invalid_memory_backup_document")
-		}
-		var state, remote, platform, event string
-		if err = db.QueryRow(`SELECT c.state,COALESCE(c.message_id,''),i.platform,i.event_id FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.reply_id=? AND c.idx=?`, item.ReplyID, index).Scan(&state, &remote, &platform, &event); err != nil {
-			return false, errors.New("memory_backup_recovery_source_mismatch")
-		}
-		if platform != e.Platform || event != sourceLedgerKey(e) || state != "sent" || remote == "" || remote != item.RemoteMessageID {
-			return false, errors.New("memory_backup_unverified_delivery")
+		if operationID, edited := operationIDFromMemoryKey(item.DocumentID); edited {
+			var channel, message, state, platform, event string
+			if err = db.QueryRow(`SELECT channel,message,state FROM message_operation_recovery_fences WHERE id=? AND action='edit_text'`, operationID).Scan(&channel, &message, &state); err != nil || state != "verified" || channel != e.ConversationID || message != item.RemoteMessageID {
+				return false, errors.New("memory_backup_edit_evidence_missing")
+			}
+			if err = db.QueryRow(`SELECT i.platform,i.event_id FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.reply_id=? AND c.message_id=? AND c.state='sent'`, item.ReplyID, message).Scan(&platform, &event); err != nil || platform != e.Platform || event != sourceLedgerKey(e) {
+				return false, errors.New("memory_backup_edit_evidence_missing")
+			}
+			// Preserve text as inert imported history. Restored projection markers
+			// suppress both this document and every dependent fact on all reads.
+		} else {
+			var index int
+			prefix := "assistant:" + item.ReplyID + ":"
+			if !strings.HasPrefix(item.DocumentID, prefix) || item.ReplyID == "" {
+				return false, errors.New("invalid_memory_backup_document")
+			}
+			if _, err = fmt.Sscanf(strings.TrimPrefix(item.DocumentID, prefix), "%d", &index); err != nil || fmt.Sprintf("%s%d", prefix, index) != item.DocumentID || index < 0 {
+				return false, errors.New("invalid_memory_backup_document")
+			}
+			var state, remote, platform, event string
+			if err = db.QueryRow(`SELECT c.state,COALESCE(c.message_id,''),i.platform,i.event_id FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.reply_id=? AND c.idx=?`, item.ReplyID, index).Scan(&state, &remote, &platform, &event); err != nil {
+				return false, errors.New("memory_backup_recovery_source_mismatch")
+			}
+			if platform != e.Platform || event != sourceLedgerKey(e) || state != "sent" || remote == "" || remote != item.RemoteMessageID {
+				return false, errors.New("memory_backup_unverified_delivery")
+			}
 		}
 	case "fact":
 		if err := memoryKeyCapacityDB(db, record.Scope); err != nil {

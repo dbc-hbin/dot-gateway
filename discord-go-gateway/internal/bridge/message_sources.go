@@ -548,8 +548,14 @@ func receiveSourceEvent(ctx context.Context, r *RESTClient, s *Store, settings S
 		return receiveMessage(ctx, r, s, settings, event.Create)
 	}
 	if m := event.Update; m != nil {
+		if err := s.catchupObserveMutation(m.ChannelID, m.GuildID, m.ID); err != nil {
+			return "", err
+		}
 		changed, err := s.InvalidateSourceUpdate(m.ChannelID, m.GuildID, m.ID)
 		if changed {
+			if err == nil {
+				_, err = s.InvalidateControlTarget(m.ChannelID, m.GuildID, m.ID, "target_updated")
+			}
 			return "source_update", err
 		}
 		if err == nil {
@@ -561,8 +567,14 @@ func receiveSourceEvent(ctx context.Context, r *RESTClient, s *Store, settings S
 		return "rejected", err
 	}
 	if m := event.Delete; m != nil {
+		if err := s.catchupObserveMutation(m.ChannelID, m.GuildID, m.ID); err != nil {
+			return "", err
+		}
 		changed, err := s.DeleteSource(m.ChannelID, m.GuildID, m.ID)
 		if changed {
+			if err == nil {
+				_, err = s.InvalidateControlTarget(m.ChannelID, m.GuildID, m.ID, "target_deleted")
+			}
 			return "source_deleted", err
 		}
 		if err == nil {

@@ -68,6 +68,14 @@ bounded explicit embeds. The private outbox/spool, exact consumer commands,
 receipt verification, limits and deployment gates are in [rich output](RICH_OUTPUT.md).
 Plain text remains the default, with link previews suppressed.
 
+## Request-bound message operations
+
+Explicit text edits, the bot’s own requested reactions, and exact-message pins
+use a separate durable one-attempt ledger. Existing delivery records remain
+immutable. See [message operations](MESSAGE_OPERATIONS.md) for owner-request
+authority, current permissions, revision/memory safeguards and uncertainty
+reconciliation. Installing the APIs does not perform any live action.
+
 ## Components
 
 - DiscordGo handles Gateway protocol/state only. Its REST send/reconnect helpers
@@ -224,3 +232,10 @@ facts. Recalled material never supplies authorization. See
 [conversation memory](CONVERSATION_MEMORY.md) for privacy boundaries, optional
 single-call note/reply workflow, explicit legacy backfill and sanitized private
 backup/restore. Memory archives are never public source artifacts.
+
+## Scoped history and prospective recovery
+
+See [SCOPED_HISTORY.md](SCOPED_HISTORY.md) for bounded exact-route message/history,
+owner search and timestamp-paginated pin reads, plus prospective reconnect
+catch-up. Read results are untrusted context and never become tasks. Automatic
+recovery arms from now on an intact live ledger; backup restores stay disarmed.

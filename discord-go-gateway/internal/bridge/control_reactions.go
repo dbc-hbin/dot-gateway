@@ -26,7 +26,11 @@ func sentControlTargetDB(db *storeConn, channel, message string) (sentControlTar
 	if err := db.QueryRow("SELECT count(*) FROM control_target_invalidations WHERE channel=? AND message=?", channel, message).Scan(&invalid); err != nil {
 		return t, err
 	}
-	if invalid != 0 {
+	projection, projectionID, projectionErr := verifiedOperationControlSnapshotDB(db, channel, message)
+	if projectionErr != nil && projectionErr != sql.ErrNoRows {
+		return t, projectionErr
+	}
+	if invalid != 0 && projectionErr != nil {
 		return t, errors.New("reaction_target_invalidated")
 	}
 	var raw, code string
@@ -58,6 +62,10 @@ func sentControlTargetDB(db *storeConn, channel, message string) (sentControlTar
 		}
 	}
 
+	if projectionErr == nil {
+		t.Text = projection.Content
+		t.Revision = operationHash([]string{t.Revision, projectionID, operationJSON(projection)})
+	}
 	return t, nil
 }
 func (s *Store) sentControlTarget(channel, message string) (sentControlTarget, error) {
@@ -89,6 +97,11 @@ func (r *RESTClient) verifyReactionTarget(ctx context.Context, e Envelope) error
 	}
 	if err = r.VerifySourceBeforeSend(context.WithValue(ctx, controlTargetDepthKey{}, depth+1), r.controlStore, target.Source); err != nil {
 		return err
+	}
+	if projected, err := r.verifyEditedControlTarget(ctx, e, target); err != nil {
+		return err
+	} else if projected {
+		return nil
 	}
 	if len(ce.TargetOutput) != 0 {
 		if r.controlStore == nil {

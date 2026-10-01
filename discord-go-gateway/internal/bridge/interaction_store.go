@@ -543,20 +543,29 @@ func (s *Store) InvalidateControlTarget(channel, guild, message, code string) (b
 	}
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			target, err := sentControlTargetDB(db, channel, message)
-			if err != nil || guild != "" && target.Source.GuildID != guild {
+			target, _, ownedErr := operationOwnedChunkDB(db, channel, message)
+			owned := ownedErr == nil && (guild == "" || target.Source.GuildID == guild)
+			var known int
+			if err := db.QueryRow(`SELECT count(*) FROM message_operation_targets WHERE channel=? AND message=? AND (?='' OR guild=?)`, channel, message, guild, guild).Scan(&known); err != nil {
+				return nil, err
+			}
+			if !owned && known == 0 {
 				return false, nil
 			}
-			if _, err = db.Exec("INSERT OR IGNORE INTO control_target_invalidations VALUES(?,?,?)", channel, message, code); err != nil {
+			if err := invalidateEditedProjectionDB(db, channel, guild, message); err != nil {
 				return nil, err
 			}
-			for _, q := range []string{"DELETE FROM consumer_claims WHERE inbound_id IN(SELECT id FROM inbound WHERE json_extract(envelope,'$.conversation_id')=? AND json_extract(envelope,'$.control.target_message_id')=?)", "DELETE FROM processing WHERE inbound_id IN(SELECT id FROM inbound WHERE json_extract(envelope,'$.conversation_id')=? AND json_extract(envelope,'$.control.target_message_id')=?)", "UPDATE inbound SET state='cancelled',claim=NULL,lease_until=NULL WHERE json_extract(envelope,'$.conversation_id')=? AND json_extract(envelope,'$.control.target_message_id')=?", "UPDATE chunks SET state='cancelled',code='control_target_changed' WHERE state='pending' AND reply_id IN(SELECT r.id FROM replies r JOIN inbound i ON i.id=r.inbound_id WHERE json_extract(i.envelope,'$.conversation_id')=? AND json_extract(i.envelope,'$.control.target_message_id')=?)"} {
-				if _, err = db.Exec(q, channel, message); err != nil {
+			if owned {
+				// Original messages edited externally also become unknown memory evidence.
+				if _, err := db.Exec(`INSERT OR IGNORE INTO message_edit_projection(channel,message,revision,state,operation_id,memory_key) VALUES(?,?,0,'unknown','','')`, channel, message); err != nil {
 					return nil, err
 				}
-			}
-			if _, err = db.Exec("UPDATE control_pending_responses SET used=1 WHERE message=? AND request=?", message, target.Request); err != nil {
-				return nil, err
+				if _, err := db.Exec("INSERT OR IGNORE INTO control_target_invalidations VALUES(?,?,?)", channel, message, code); err != nil {
+					return nil, err
+				}
+				if err := invalidateOperationBindingsDB(db, channel, message); err != nil {
+					return nil, err
+				}
 			}
 			return true, nil
 		})

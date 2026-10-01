@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // ValidationInput is private quarantined work. It is never returned to a
@@ -48,40 +49,27 @@ func (s *Store) StageIngress(e Envelope) (string, error) {
 	}
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			known, err := sourceKnownDB(db, e)
+			capacity := 1000
+			enabled, err := catchupEnabledDB(db)
 			if err != nil {
 				return nil, err
 			}
-			if known {
-				return "duplicate", nil
+			if enabled {
+				capacity = catchupLiveCapacity
 			}
-			var n int
-			if err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)`, e.Platform, sourceLedgerKey(e), e.Platform, sourceLedgerKey(e)).Scan(&n); err != nil {
-				return nil, err
-			}
-			if n != 0 {
-				return "duplicate", nil
-			}
-			n, err = activeInboundCount(db)
+			created := epoch()
+			fenced, err := catchupFencedDB(db, e)
 			if err != nil {
 				return nil, err
 			}
-			if n >= 1000 {
-				return "queue_full", nil
+			if fenced {
+				created = snowCreated(e.EventID)
 			}
-			if err = registerSourceDB(db, e); err != nil {
-				return nil, err
+			outcome, err := s.stageIngressDB(db, e, created, capacity)
+			if err == nil {
+				err = catchupLiveProgressDB(db, e, outcome)
 			}
-			id, err := uuidHex()
-			if err != nil {
-				return nil, err
-			}
-			raw, err := json.Marshal(e)
-			if err != nil {
-				return nil, err
-			}
-			_, err = db.Exec(`INSERT INTO ingress_validation(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, id, e.Platform, sourceLedgerKey(e), string(raw), epoch())
-			return "validation_staged", err
+			return outcome, err
 		})
 	})
 	if err != nil {
@@ -97,10 +85,13 @@ func (s *Store) NextValidation(now float64) (*ValidationInput, error) {
 		// A deferred/blocked conversation cannot hold up another conversation.
 		// Within a conversation, later events may not overtake unvalidated work.
 		err := db.QueryRow(`SELECT v.id,v.envelope,v.created,v.attempts FROM ingress_validation v
-			WHERE v.state='pending' AND v.next_attempt<=? AND NOT EXISTS(SELECT 1 FROM message_sources src WHERE src.platform=v.platform AND src.event_id=json_extract(v.envelope,'$.event_id') AND (src.state!='current' OR src.revision!=COALESCE(json_extract(v.envelope,'$.source_revision'),0))) AND NOT EXISTS(
+			WHERE v.state='pending' AND v.next_attempt<=? AND NOT EXISTS(SELECT 1 FROM catchup_routes h WHERE h.channel_id=json_extract(v.envelope,'$.conversation_id') AND h.state NOT IN ('idle','disarmed') AND (length(h.floor)<length(json_extract(v.envelope,'$.event_id')) OR (length(h.floor)=length(json_extract(v.envelope,'$.event_id')) AND h.floor<json_extract(v.envelope,'$.event_id')))) AND NOT EXISTS(SELECT 1 FROM message_sources src WHERE src.platform=v.platform AND src.event_id=json_extract(v.envelope,'$.event_id') AND (src.state!='current' OR src.revision!=COALESCE(json_extract(v.envelope,'$.source_revision'),0))) AND NOT EXISTS(
 				SELECT 1 FROM ingress_validation older WHERE older.state IN ('pending','blocked') AND older.platform=v.platform
 				AND json_extract(older.envelope,'$.conversation_id')=json_extract(v.envelope,'$.conversation_id')
-				AND (older.created<v.created OR (older.created=v.created AND older.rowid<v.rowid)))
+				AND (
+                    (EXISTS(SELECT 1 FROM catchup_routes h WHERE h.channel_id=json_extract(v.envelope,'$.conversation_id')) AND COALESCE(json_extract(older.envelope,'$.control'),'')='' AND COALESCE(json_extract(v.envelope,'$.control'),'')='' AND
+                        (length(json_extract(older.envelope,'$.event_id'))<length(json_extract(v.envelope,'$.event_id')) OR (length(json_extract(older.envelope,'$.event_id'))=length(json_extract(v.envelope,'$.event_id')) AND json_extract(older.envelope,'$.event_id')<json_extract(v.envelope,'$.event_id')) OR (json_extract(older.envelope,'$.event_id')=json_extract(v.envelope,'$.event_id') AND older.rowid<v.rowid)))
+                    OR ((NOT EXISTS(SELECT 1 FROM catchup_routes h WHERE h.channel_id=json_extract(v.envelope,'$.conversation_id')) OR COALESCE(json_extract(older.envelope,'$.control'),'')!='' OR COALESCE(json_extract(v.envelope,'$.control'),'')!='') AND (older.created<v.created OR (older.created=v.created AND older.rowid<v.rowid)))))
 			ORDER BY v.created,v.rowid LIMIT 1`, now).Scan(&in.ID, &raw, &in.Created, &in.Attempts)
 		if err == sql.ErrNoRows {
 			return (*ValidationInput)(nil), nil
@@ -251,6 +242,12 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 				}
 				outcome = "accepted"
 			}
+			if err = rememberReadRouteDB(db, event); err != nil {
+				return nil, err
+			}
+			if err = catchupRegisterDB(db, event, snowPrevious(snowAt(time.Now().Add(time.Millisecond)))); err != nil {
+				return nil, err
+			}
 			_, err = db.Exec(`DELETE FROM ingress_validation WHERE id=?`, in.ID)
 			return outcome, err
 		})
@@ -259,4 +256,41 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 		return "", err
 	}
 	return v.(string), nil
+}
+
+func (s *Store) stageIngressDB(db *storeConn, e Envelope, created float64, capacity int) (string, error) {
+	known, err := sourceKnownDB(db, e)
+	if err != nil {
+		return "", err
+	}
+	if known {
+		return "duplicate", nil
+	}
+	var n int
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE platform=? AND event_id=?) + (SELECT count(*) FROM ingress_validation WHERE platform=? AND event_id=?)`, e.Platform, sourceLedgerKey(e), e.Platform, sourceLedgerKey(e)).Scan(&n); err != nil {
+		return "", err
+	}
+	if n != 0 {
+		return "duplicate", nil
+	}
+	n, err = activeInboundCount(db)
+	if err != nil {
+		return "", err
+	}
+	if n >= capacity {
+		return "queue_full", nil
+	}
+	if err = registerSourceDB(db, e); err != nil {
+		return "", err
+	}
+	id, err := uuidHex()
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return "", err
+	}
+	_, err = db.Exec(`INSERT INTO ingress_validation(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, id, e.Platform, sourceLedgerKey(e), string(raw), created)
+	return "validation_staged", err
 }

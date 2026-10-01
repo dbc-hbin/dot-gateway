@@ -112,20 +112,22 @@ type MemoryDocumentFence struct {
 	Forgotten  bool   `json:"forgotten"`
 }
 type Snapshot struct {
-	MemorySources  []MemorySourceFence   `json:"memory_sources,omitempty"`
-	MemoryFences   []MemoryDocumentFence `json:"memory_fences,omitempty"`
-	MemoryLedgerID string                `json:"memory_ledger_id,omitempty"`
-	Schema         int                   `json:"schema"`
-	Created        string                `json:"created_at"`
-	ManifestSHA    string                `json:"source_manifest_sha256"`
-	Operation      Operation             `json:"operation"`
-	Events         []Event               `json:"events"`
-	Ingress        []Event               `json:"ingress"`
-	Replies        []Reply               `json:"replies"`
-	Chunks         []Chunk               `json:"chunks"`
-	Diagnostics    []Diagnostic          `json:"diagnostics"`
-	TestSends      []TestSend            `json:"test_sends"`
-	Reports        []Receipt             `json:"reports"`
+	MessageOperations *MessageOperationState `json:"message_operations,omitempty"`
+	Phase3            *Phase3State           `json:"phase3,omitempty"`
+	MemorySources     []MemorySourceFence    `json:"memory_sources,omitempty"`
+	MemoryFences      []MemoryDocumentFence  `json:"memory_fences,omitempty"`
+	MemoryLedgerID    string                 `json:"memory_ledger_id,omitempty"`
+	Schema            int                    `json:"schema"`
+	Created           string                 `json:"created_at"`
+	ManifestSHA       string                 `json:"source_manifest_sha256"`
+	Operation         Operation              `json:"operation"`
+	Events            []Event                `json:"events"`
+	Ingress           []Event                `json:"ingress"`
+	Replies           []Reply                `json:"replies"`
+	Chunks            []Chunk                `json:"chunks"`
+	Diagnostics       []Diagnostic           `json:"diagnostics"`
+	TestSends         []TestSend             `json:"test_sends"`
+	Reports           []Receipt              `json:"reports"`
 }
 
 var ident = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -383,6 +385,12 @@ func snapshotDB(p string, s *Snapshot) error {
 		}
 		sort.Slice(s.MemoryFences, func(i, j int) bool { return s.MemoryFences[i].DocumentID < s.MemoryFences[j].DocumentID })
 	}
+	if e = snapshotPhase3(tx, s); e != nil {
+		return e
+	}
+	if e = snapshotMessageOperations(tx, s); e != nil {
+		return e
+	}
 	return tx.Commit()
 }
 func snapshotReports(dir string, s *Snapshot) error {
@@ -444,9 +452,15 @@ func transportEventID(s string) bool {
 		return true
 	}
 	id, ok := strings.CutPrefix(s, "control:")
-	return ok && (snowflakeID(id) || regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id))
+	return ok && (snowflakeID(id) || regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) || validReactionTransition(id))
 }
 func validateSnapshot(s Snapshot) error {
+	if err := validateMessageOperations(s); err != nil {
+		return err
+	}
+	if err := validatePhase3(s); err != nil {
+		return err
+	}
 	if s.MemoryLedgerID == "" && (len(s.MemorySources) > 0 || len(s.MemoryFences) > 0) {
 		return errors.New("memory fences require ledger identity")
 	}
@@ -459,7 +473,7 @@ func validateSnapshot(s Snapshot) error {
 		seenSources[key] = true
 	}
 	for _, v := range s.MemoryFences {
-		if !regexp.MustCompile(`^(user:[A-Za-z0-9_-]{1,128}|assistant:[A-Za-z0-9_-]{1,128}:[0-9]{1,10}|fact:[0-9a-f]{64}:[a-z0-9][a-z0-9_.-]{0,79})$`).MatchString(v.DocumentID) || v.Version < 0 || seenDocuments[v.DocumentID] || (strings.HasPrefix(v.DocumentID, "fact:") && v.Version == 0) {
+		if !regexp.MustCompile(`^(user:[A-Za-z0-9_-]{1,128}|assistant:[A-Za-z0-9_-]{1,128}:[0-9]{1,10}|assistant-edit:[0-9a-f]{64}|fact:[0-9a-f]{64}:[a-z0-9][a-z0-9_.-]{0,79})$`).MatchString(v.DocumentID) || v.Version < 0 || seenDocuments[v.DocumentID] || (strings.HasPrefix(v.DocumentID, "fact:") && v.Version == 0) {
 			return errors.New("invalid memory document fence")
 		}
 		seenDocuments[v.DocumentID] = true
@@ -476,6 +490,9 @@ func validateSnapshot(s Snapshot) error {
 		key := v.Platform + "/" + v.EventID
 		if !validID(v.ID) || v.Platform != "discord" || !transportEventID(v.EventID) || !validID(v.State) || !finitePositive(v.Created) || ids[v.ID] || events[key] {
 			return errors.New("invalid or duplicate event")
+		}
+		if owner := reactionTransitionOwner(v.EventID); owner != "" && owner != s.Operation.OwnerID {
+			return errors.New("reaction event owner mismatch")
 		}
 		ids[v.ID] = true
 		events[key] = true
@@ -565,6 +582,8 @@ func validateSnapshot(s Snapshot) error {
 }
 
 const restoreSchema = `PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
+CREATE TABLE catchup_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+INSERT INTO catchup_meta VALUES('state','disarmed_restore');
 CREATE TABLE inbound(id TEXT PRIMARY KEY,platform TEXT NOT NULL,event_id TEXT NOT NULL,envelope TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',claim TEXT,lease_until REAL,created REAL NOT NULL,UNIQUE(platform,event_id));
 CREATE TABLE replies(id TEXT PRIMARY KEY,inbound_id TEXT NOT NULL UNIQUE REFERENCES inbound(id),text TEXT NOT NULL,created REAL NOT NULL);
 CREATE TABLE chunks(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',message_id TEXT,code TEXT,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(reply_id,idx));
@@ -646,6 +665,12 @@ func restoreState(s Snapshot, dest string, failAfter int) error {
 					return e
 				}
 			}
+		}
+		if e = restorePhase3(tx, s); e != nil {
+			return e
+		}
+		if e = restoreMessageOperations(tx, s); e != nil {
+			return e
 		}
 		if e = tx.Commit(); e != nil {
 			return e

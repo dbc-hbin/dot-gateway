@@ -208,3 +208,12 @@ forget 표식과 fact version만 보존합니다. 실제 redacted 메모리는 �
 metadata의 삭제/forget/버전 표식은 이전 메모리 아카이브보다 우선합니다. 복원 후
 다시 백업해도 이 표식은 유지됩니다. 양쪽 백업 모두 삭제 이전이라면 나중의 삭제를
 알아낼 수 없습니다. 기존 memory metadata가 없는 스냅샷 형식도 계속 지원합니다.
+
+## 등록 명령·컨트롤 이력 복원
+
+선택적 phase3 metadata는 승인된 앱/서버/소유자에 고정된 ask/status/cancel 명령 ID,
+등록 시도 표식, 토큰 없는 interaction 중복 방지, reaction 전이, 취소 및 최소 첨부
+영수증 정보를 보존합니다. 등록 API를 다시 호출하거나 오래된 요청을 실행하지
+않습니다. 첨부 정보는 ID/크기뿐인 별도 inert 표식이며 실제 파일/본문/URL/파일명은
+복원하지 않습니다. 모든 복원은 catchup을 disarmed_restore 상태로 유지합니다.
+정확한 포함·제외 목록과 재활성화 한계는 PRIVATE_BACKUP_ALLOWLIST.md를 확인합니다.

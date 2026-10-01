@@ -81,6 +81,11 @@ func run(args []string) int {
 		return 2
 	}
 	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed["read-message"] = ""
+	allowed["read-history"] = "before limit"
+	allowed["read-pins"] = "before limit"
+	allowed["search-messages"] = "query offset limit"
+	allowed["catchup-status"] = ""
 	allowed["reply-output-dir"] = ""
 	allowed["prune-reply-spool"] = ""
 	allowed["verify-reply"] = "chunk"
@@ -89,6 +94,10 @@ func run(args []string) int {
 	allowed["materialize"] = "claim attachment"
 	allowed["register-commands"] = "dry-run snapshot-file fetch apply-reviewed plan-file"
 	allowed["bind-response"] = "claim message-id"
+	allowed["message-operation"] = "claim json-file"
+	allowed["message-operation-status"] = ""
+	allowed["abandon-message-operation"] = "claim operation-id"
+	allowed["reconcile-message-operation"] = "claim operation-id verified-in-discord"
 	allowed["memory-search"] = "claim query"
 	allowed["memory-put"] = "claim json-file"
 	allowed["memory-get"] = "claim key"
@@ -111,16 +120,18 @@ func run(args []string) int {
 	}
 	expected := 0
 	switch cmd {
-	case "recover-thread-message":
+	case "recover-thread-message", "read-message":
 		expected = 2
-	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply", "memory-search", "memory-put", "memory-get", "memory-forget", "memory-export", "memory-import":
+	case "read-history", "read-pins", "search-messages":
+		expected = 1
+	case "message-operation", "message-operation-status", "abandon-message-operation", "reconcile-message-operation", "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply", "memory-search", "memory-put", "memory-get", "memory-forget", "memory-export", "memory-import":
 		expected = 1
 	}
 	if len(pos) != expected {
 		output(map[string]string{"error": "invalid_arguments"})
 		return 2
 	}
-	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message" || cmd == "materialize" || cmd == "verify-reply" || cmd == "reconcile-reply" || cmd == "register-commands" && (f["fetch"] == "true" || f["apply-reviewed"] == "true"), cmd == "check")
+	settings, e := bridge.LoadSettings(cmd == "message-operation" || cmd == "reconcile-message-operation" || cmd == "read-message" || cmd == "read-history" || cmd == "read-pins" || cmd == "search-messages" || cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message" || cmd == "materialize" || cmd == "verify-reply" || cmd == "reconcile-reply" || cmd == "register-commands" && (f["fetch"] == "true" || f["apply-reviewed"] == "true"), cmd == "check")
 	if e != nil {
 		output(map[string]string{"error": e.Error()})
 		return 2
@@ -187,13 +198,51 @@ func run(args []string) int {
 		return d, nil
 	}
 	claim := f["claim"]
-	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response" || cmd == "memory-search" || cmd == "memory-put" || cmd == "memory-get" || cmd == "memory-forget") && claim == "" {
+	if (cmd == "abandon-message-operation" || cmd == "message-operation" || cmd == "reconcile-message-operation" || cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response" || cmd == "memory-search" || cmd == "memory-put" || cmd == "memory-get" || cmd == "memory-forget") && claim == "" {
 		output(map[string]string{"error": "claim_required"})
 		return 2
 	}
 	var result any
 	mutated := false
 	switch cmd {
+	case "catchup-status":
+		result, e = store.CatchupStatus()
+	case "read-message", "read-history", "read-pins", "search-messages":
+		var rest *bridge.RESTClient
+		rest, e = bridge.NewRESTClient(settings)
+		if e != nil {
+			break
+		}
+		defer rest.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		limit, err := integer("limit", 25)
+		if err != nil {
+			e = errors.New("invalid_limit")
+			break
+		}
+		switch cmd {
+		case "read-message":
+			result, e = rest.ReadMessage(ctx, store, pos[0], pos[1])
+		case "read-history":
+			result, e = rest.ReadHistory(ctx, store, pos[0], f["before"], limit)
+		case "read-pins":
+			result, e = rest.ReadPins(ctx, store, pos[0], f["before"], limit)
+		case "search-messages":
+			offset, err := integer("offset", 0)
+			if err != nil {
+				e = errors.New("invalid_offset")
+				break
+			}
+			result, e = rest.SearchMessages(ctx, store, pos[0], f["query"], offset, limit)
+		}
+	case "abandon-message-operation":
+		result, e = store.AbandonMessageOperation(pos[0], claim, f["operation-id"])
+	case "message-operation-status":
+		result, e = store.MessageOperation(pos[0])
+	case "message-operation", "reconcile-message-operation":
+		result, e = runMessageOperation(cmd, pos[0], claim, f, settings, store)
+		mutated = e == nil
 	case "memory-export":
 		result, e = store.ExportMemory(pos[0])
 	case "memory-import":

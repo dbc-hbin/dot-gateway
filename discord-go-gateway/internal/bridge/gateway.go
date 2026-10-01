@@ -193,6 +193,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		return e
 	}
 	defer rest.Close()
+	if e = store.ActivateCatchup(settings, time.Now()); e != nil {
+		return e
+	}
 	rest.contextEnabled = true
 	rest.controlStore = store
 	g := &gatewayState{state: "connecting"}
@@ -333,6 +336,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	disconnected := make(chan struct{}, 1)
 	s.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
 		g.disconnect()
+		if err := store.MarkCatchupGaps(time.Now(), "disconnected"); err != nil {
+			fail("catchup_persistence_failed")
+		}
 		hub.Notify()
 		select {
 		case disconnected <- struct{}{}:
@@ -349,6 +355,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		select {
 		case incoming <- sourceGatewayEvent{Create: m.Message}:
 		default:
+			if err := store.recordCatchupEventGap(m.ChannelID, m.ID); err != nil {
+				fail("catchup_persistence_failed")
+			}
 			fail("gateway_inbound_capacity_exceeded")
 		}
 	})
@@ -424,6 +433,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 					return
 				}
 				g.recordIngress(outcome)
+				if outcome == "queue_full" {
+					fail("gateway_inbound_capacity_exceeded")
+				}
 				hub.Notify()
 				NotifyFile(settings.DBPath + ".sock.wake")
 			}
@@ -435,6 +447,15 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 				fail("authentication_failed")
 			} else {
 				fail("gateway_validation_failed")
+			}
+		}
+	})
+	start(func() {
+		if err := catchupLoop(ctx, store, rest, hub, g); err != nil {
+			if err.Error() == "authentication_failed" {
+				fail("authentication_failed")
+			} else {
+				fail("catchup_failed")
 			}
 		}
 	})

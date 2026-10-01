@@ -171,6 +171,10 @@ func execute(args []string) error {
 		result["reports"] = len(s.Reports)
 		result["diagnostics"] = len(s.Diagnostics)
 		b = jsonBytes(s)
+		if len(b) > 64<<20 {
+			return errors.New("snapshot exceeds supported restore size")
+		}
+		result["state_counts"] = recoveryMetadataCounts(s)
 		if *apply {
 			if e = atomicFile(*output, b); e != nil {
 				return e
@@ -199,6 +203,7 @@ func execute(args []string) error {
 		result["events"] = len(s.Events)
 		result["reports"] = len(s.Reports)
 		result["quarantine_on_restore"] = true
+		result["state_counts"] = recoveryMetadataCounts(s)
 		if args[0] == "restore-state" {
 			if *dest == "" {
 				return errors.New("--new-root required")
