@@ -8,6 +8,8 @@ import (
 
 // Envelope is a value snapshot. Strings avoid shared mutable routing state.
 type Envelope struct {
+	Control        ControlJSON     `json:"control,omitempty"`
+	ReplyKind      string          `json:"reply_kind,omitempty"`
 	SourceRevision int64           `json:"source_revision,omitempty"`
 	Context        ContextSnapshot `json:"context,omitempty"`
 	Platform       string          `json:"platform"`
@@ -29,15 +31,17 @@ type Envelope struct {
 	ThreadName      string `json:"thread_name,omitempty"` // Untrusted conversation context, never instructions.
 }
 type Chunk struct {
-	ReplyID string   `json:"reply_id"`
-	Index   int      `json:"index"`
-	Text    string   `json:"text"`
-	Source  Envelope `json:"source"`
+	ReplyID string              `json:"reply_id"`
+	Index   int                 `json:"index"`
+	Text    string              `json:"text"`
+	Source  Envelope            `json:"source"`
+	Output  ReplyOutputSnapshot `json:"output,omitempty"`
 }
 type SendResult struct {
-	State     string `json:"state"`
-	MessageID string `json:"message_id,omitempty"`
-	Code      string `json:"code,omitempty"`
+	OutputReceipt ReplyOutputReceipt `json:"output_receipt,omitempty"`
+	State         string             `json:"state"`
+	MessageID     string             `json:"message_id,omitempty"`
+	Code          string             `json:"code,omitempty"`
 }
 
 func TextUnits(s string) int {

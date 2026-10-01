@@ -58,9 +58,15 @@ func (p Policy) Allows(e Envelope) bool {
 	guild := p.GuildID != "" && e.GuildID == p.GuildID && (p.GuildMode == "all" || e.BotMentioned)
 	route := plain && (e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && guild && e.ConversationID == p.GuildChannelID) ||
 		e.RouteKind == "guild_thread" && guild && e.ConversationID != p.GuildChannelID && e.ParentChannelID == p.GuildChannelID && (e.ThreadType == 11 || e.ThreadType == 12)
-	return p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
+	return (e.Control == "" || validControl(e)) && p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
 }
 func (p Policy) Accepts(e Envelope) bool {
+	if e.Control != "" {
+		return p.Allows(e) && validControl(e) && utf8.ValidString(e.Text) && TextUnits(e.Text) <= 8000 && (trimText(e.Text) != "" || e.ReplyKind == "message")
+	}
+	if e.ReplyKind != "" && e.ReplyKind != "message" {
+		return false
+	}
 	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent()) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
 }
 

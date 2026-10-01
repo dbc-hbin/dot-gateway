@@ -96,7 +96,11 @@ func sourceKnownDB(db *storeConn, e Envelope) (bool, error) {
 	err := db.QueryRow(`SELECT count(*) FROM message_sources WHERE platform=? AND event_id=?`, e.Platform, e.EventID).Scan(&n)
 	return n > 0, err
 }
-func sourceCurrentDB(db *storeConn, e Envelope) (bool, error) {
+func sourceCurrentDB(db *storeConn, e Envelope) (bool, error) { return sourceCurrentDBDepth(db, e, 0) }
+func sourceCurrentDBDepth(db *storeConn, e Envelope, depth int) (bool, error) {
+	if e.Control != "" {
+		return controlSourceCurrentDB(db, e, depth)
+	}
 	if !isMessageSource(e) {
 		return true, nil
 	}
@@ -172,7 +176,7 @@ func revokeSourceClaimsDB(db *storeConn, e Envelope) error {
 			return err
 		}
 	}
-	return nil
+	return revokeDependentControlClaimsDB(db, e, false)
 }
 
 func (s *Store) DeleteSource(channel, guild, id string) (bool, error) {
@@ -206,6 +210,9 @@ func (s *Store) DeleteSource(channel, guild, id string) (bool, error) {
 }
 func retireSourceDB(db *storeConn, e Envelope, code string) error {
 	if err := revokeSourceClaimsDB(db, e); err != nil {
+		return err
+	}
+	if err := revokeDependentControlClaimsDB(db, e, true); err != nil {
 		return err
 	}
 	key := sourceLedgerKey(e)
@@ -426,6 +433,23 @@ func messageSourceLoop(ctx context.Context, store *Store, rest *RESTClient, hub 
 // VerifySourceBeforeSend catches missed update/delete events. It never posts.
 // It is installed by the real gateway, not by standalone offline REST fixtures.
 func (r *RESTClient) VerifySourceBeforeSend(ctx context.Context, s *Store, e Envelope) error {
+	if e.Control != "" {
+		current, err := s.SourceCurrent(e)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return errors.New("source_not_current")
+		}
+		ce, err := e.ControlEvent()
+		if err != nil {
+			return err
+		}
+		if ce.Kind == "reaction" {
+			return r.verifyReactionTarget(ctx, e)
+		}
+		return nil
+	}
 	if !isMessageSource(e) {
 		return nil
 	}
@@ -492,6 +516,10 @@ func cancelStaleReplyAfterResultDB(db *storeConn, c Chunk) error {
 	if err != nil || current {
 		return err
 	}
+	if c.Source.Control != "" {
+		_, err = cancelReplyIfUnsent(db, c.ReplyID, "control_source_not_current")
+		return err
+	}
 	var state string
 	if err = db.QueryRow(`SELECT state FROM message_sources WHERE platform=? AND event_id=?`, c.Source.Platform, c.Source.EventID).Scan(&state); err != nil {
 		return err
@@ -520,12 +548,24 @@ func receiveSourceEvent(ctx context.Context, r *RESTClient, s *Store, settings S
 		if changed {
 			return "source_update", err
 		}
+		if err == nil {
+			changed, err = s.InvalidateControlTarget(m.ChannelID, m.GuildID, m.ID, "target_updated")
+			if changed {
+				return "control_target_updated", err
+			}
+		}
 		return "rejected", err
 	}
 	if m := event.Delete; m != nil {
 		changed, err := s.DeleteSource(m.ChannelID, m.GuildID, m.ID)
 		if changed {
 			return "source_deleted", err
+		}
+		if err == nil {
+			changed, err = s.InvalidateControlTarget(m.ChannelID, m.GuildID, m.ID, "target_deleted")
+			if changed {
+				return "control_target_deleted", err
+			}
 		}
 		return "rejected", err
 	}
@@ -622,7 +662,9 @@ func (s *Store) RejectSourceRefresh(in MessageSource) error {
 
 // The control-plane integration extends this single hook with Control=="" and
 // ReplyKind!="interaction". The standalone message-plane build has no controls.
-func isMessageSource(e Envelope) bool { return e.Platform == "discord" }
+func isMessageSource(e Envelope) bool {
+	return e.Platform == "discord" && e.Control == "" && e.ReplyKind != "interaction"
+}
 
 // RecordResult and an unchanged refresh can complete in either order. Only this
 // explicit source fence failure is known to have attempted zero POSTs.

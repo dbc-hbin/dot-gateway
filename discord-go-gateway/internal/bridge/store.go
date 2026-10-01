@@ -28,11 +28,12 @@ type Claim struct {
 	Envelope   Envelope `json:"envelope"`
 }
 type DeliveryChunk struct {
-	Index     int     `json:"idx"`
-	State     string  `json:"state"`
-	MessageID *string `json:"message_id"`
-	Code      *string `json:"code"`
-	Attempts  int     `json:"attempts"`
+	OutputReceipt ReplyOutputReceipt `json:"output_receipt,omitempty"`
+	Index         int                `json:"idx"`
+	State         string             `json:"state"`
+	MessageID     *string            `json:"message_id"`
+	Code          *string            `json:"code"`
+	Attempts      int                `json:"attempts"`
 }
 type Delivery struct {
 	ReplyID      string             `json:"reply_id"`
@@ -83,12 +84,13 @@ type StorePolicy interface {
 	Accepts(Envelope) bool
 }
 type Store struct {
-	policy   StorePolicy
-	requests chan storeRequest
-	done     chan struct{}
-	mu       sync.RWMutex
-	closed   bool
-	closeErr error
+	replyStateDir string
+	policy        StorePolicy
+	requests      chan storeRequest
+	done          chan struct{}
+	mu            sync.RWMutex
+	closed        bool
+	closeErr      error
 }
 
 func epoch() float64 { return float64(time.Now().UnixNano()) / 1e9 }
@@ -145,7 +147,7 @@ func OpenStore(path string, policy StorePolicy) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{policy: policy, requests: make(chan storeRequest), done: make(chan struct{})}
+	s := &Store{replyStateDir: ReplyStateDir(p), policy: policy, requests: make(chan storeRequest), done: make(chan struct{})}
 	ready := make(chan error, 1)
 	go s.run(p, ready)
 	if err = <-ready; err != nil {
@@ -236,6 +238,8 @@ func initializeStore(db *storeConn) error {
 CREATE TABLE IF NOT EXISTS inbound(id TEXT PRIMARY KEY,platform TEXT NOT NULL,event_id TEXT NOT NULL,envelope TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',claim TEXT,lease_until REAL,created REAL NOT NULL,UNIQUE(platform,event_id));
 CREATE TABLE IF NOT EXISTS replies(id TEXT PRIMARY KEY,inbound_id TEXT NOT NULL UNIQUE REFERENCES inbound(id),text TEXT NOT NULL,created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS chunks(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',message_id TEXT,code TEXT,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(reply_id,idx));
+CREATE TABLE IF NOT EXISTS reply_output_receipts(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,receipt TEXT NOT NULL,PRIMARY KEY(reply_id,idx));
+CREATE TABLE IF NOT EXISTS reply_outputs(reply_id TEXT PRIMARY KEY REFERENCES replies(id),payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reply_cancellations(reply_id TEXT PRIMARY KEY REFERENCES replies(id),cancelled_at REAL NOT NULL,code TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS processing(inbound_id TEXT PRIMARY KEY REFERENCES inbound(id),claim TEXT NOT NULL,until REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS consumer_claims(consumer TEXT PRIMARY KEY,inbound_id TEXT NOT NULL REFERENCES inbound(id),claim TEXT NOT NULL);
@@ -247,6 +251,9 @@ CREATE INDEX IF NOT EXISTS inbound_claim_order ON inbound(state,created,id);
 CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 `)
 		if err != nil {
+			return nil, err
+		}
+		if err = initControlStore(db); err != nil {
 			return nil, err
 		}
 		if err = initIngressValidation(db); err != nil {
@@ -533,6 +540,9 @@ func (s *Store) Renew(id, claim string, seconds int) error {
 		return errors.New("invalid lease")
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
+		if err := claimSourceCurrentDB(db, id, claim); err != nil {
+			return nil, err
+		}
 		now := epoch()
 		return nil, changedOne(db.Exec("UPDATE inbound SET lease_until=? WHERE id=? AND claim=? AND state='claimed' AND lease_until>?", now+float64(seconds), id, claim, now))
 	})
@@ -544,6 +554,9 @@ func (s *Store) BeginProcessing(id, claim string, seconds int) error {
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			if err := claimSourceCurrentDB(db, id, claim); err != nil {
+				return nil, err
+			}
 			now := epoch()
 			var lease float64
 			if err := db.QueryRow("SELECT lease_until FROM inbound WHERE id=? AND claim=? AND state='claimed' AND lease_until>?", id, claim, now).Scan(&lease); err != nil {
@@ -563,7 +576,22 @@ func (s *Store) BeginProcessing(id, claim string, seconds int) error {
 	return err
 }
 func (s *Store) QueueReply(id, claim, text string) (string, error) {
+	return s.queueReply(id, claim, text, nil)
+}
+
+func (s *Store) QueueReplyManifest(id, claim string, data []byte) (string, error) {
+	m, err := ParseReplyManifest(data)
+	if err != nil {
+		return "", err
+	}
+	return s.queueReply(id, claim, m.Text, &m)
+}
+
+func (s *Store) queueReply(id, claim, text string, manifest *ReplyManifest) (string, error) {
 	parts, err := SplitText(text)
+	if manifest != nil && trimText(text) == "" {
+		parts, err = []string{""}, nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -580,13 +608,24 @@ func (s *Store) QueueReply(id, claim, text string) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			if !current {
+			if !current || rows[0].state == "cancelled" || rows[0].event.Control != "" && (rows[0].claim == "" || rows[0].claim != claim || rows[0].state != "claimed" && rows[0].state != "replied") {
 				return nil, ErrClaim
 			}
-			var existing, oldText string
-			err = db.QueryRow("SELECT id,text FROM replies WHERE inbound_id=?", id).Scan(&existing, &oldText)
+			var output ReplyOutputSnapshot
+			if manifest != nil {
+				r := rows[0]
+				if r.claim != claim || (r.state != "replied" && (r.state != "claimed" || r.lease <= epoch())) {
+					return nil, ErrClaim
+				}
+				output, err = stageReplyOutput(s.replyStateDir, *manifest)
+				if err != nil {
+					return nil, err
+				}
+			}
+			var existing, oldText, oldOutput string
+			err = db.QueryRow("SELECT r.id,r.text,COALESCE(o.payload,'') FROM replies r LEFT JOIN reply_outputs o ON o.reply_id=r.id WHERE r.inbound_id=?", id).Scan(&existing, &oldText, &oldOutput)
 			if err == nil {
-				if oldText != text {
+				if oldText != text || oldOutput != string(output) {
 					return nil, errors.New("this inbound already has a different reply")
 				}
 				return existing, nil
@@ -604,6 +643,11 @@ func (s *Store) QueueReply(id, claim, text string) (string, error) {
 			}
 			if _, err = db.Exec("INSERT INTO replies VALUES(?,?,?,?)", rid, id, text, epoch()); err != nil {
 				return nil, err
+			}
+			if output != "" {
+				if _, err = db.Exec("INSERT INTO reply_outputs(reply_id,payload) VALUES(?,?)", rid, string(output)); err != nil {
+					return nil, err
+				}
 			}
 			for i, p := range parts {
 				if _, err = db.Exec("INSERT INTO chunks(reply_id,idx,text) VALUES(?,?,?)", rid, i, p); err != nil {
@@ -654,7 +698,7 @@ func (s *Store) RecoverInterrupted() (int, error) {
 func (s *Store) NextChunk() (*Chunk, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=c.reply_id) AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state!='sent' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=older.id)) ORDER BY r.created,r.rowid,c.idx`)
+			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope,CASE WHEN c.idx=0 THEN COALESCE((SELECT payload FROM reply_outputs WHERE reply_id=c.reply_id),'') ELSE '' END FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND i.state!='cancelled' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=c.reply_id) AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state NOT IN ('sent','cancelled') AND (source.state!='cancelled' OR unfinished.state IN ('sending','uncertain')) AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=older.id)) ORDER BY r.created,r.rowid,c.idx`)
 			if err != nil {
 				return nil, err
 			}
@@ -662,7 +706,7 @@ func (s *Store) NextChunk() (*Chunk, error) {
 			for rows.Next() {
 				var c Chunk
 				var raw string
-				if err = rows.Scan(&c.ReplyID, &c.Index, &c.Text, &raw); err != nil {
+				if err = rows.Scan(&c.ReplyID, &c.Index, &c.Text, &raw, &c.Output); err != nil {
 					rows.Close()
 					return nil, err
 				}
@@ -739,6 +783,9 @@ func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			if err := persistReplyOutputReceipt(db, c, r); err != nil {
+				return nil, err
+			}
 			res, err := db.Exec("UPDATE chunks SET state=?,message_id=?,code=? WHERE reply_id=? AND idx=? AND state='sending'", r.State, nullable(r.MessageID), symbolicCode(r.Code), c.ReplyID, c.Index)
 			if err = changedOne(res, err); err != nil {
 				if err == ErrClaim {
@@ -751,6 +798,15 @@ func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement
 			}
 			if err = cancelStaleReplyAfterResultDB(db, c); err != nil {
 				return nil, err
+			}
+			if c.Source.ReplyKind == "interaction" && r.State == "failed" && r.Code == "interaction_token_unavailable_reissue_required" {
+				var inbound string
+				if err := db.QueryRow("SELECT inbound_id FROM replies WHERE id=?", c.ReplyID).Scan(&inbound); err != nil {
+					return nil, err
+				}
+				if err := expireInteractionDB(db, inbound); err != nil {
+					return nil, err
+				}
 			}
 			var id string
 			var created, started float64
@@ -785,7 +841,7 @@ func delivery(db *storeConn, id string) (Delivery, error) {
 		}
 		return d, err
 	}
-	rows, err := db.Query("SELECT idx,state,message_id,code,attempts FROM chunks WHERE reply_id=? ORDER BY idx", id)
+	rows, err := db.Query("SELECT c.idx,c.state,c.message_id,c.code,c.attempts,COALESCE(o.receipt,'') FROM chunks c LEFT JOIN reply_output_receipts o ON o.reply_id=c.reply_id AND o.idx=c.idx WHERE c.reply_id=? ORDER BY c.idx", id)
 	if err != nil {
 		return d, err
 	}
@@ -793,14 +849,14 @@ func delivery(db *storeConn, id string) (Delivery, error) {
 	states := map[string]bool{}
 	for rows.Next() {
 		var c DeliveryChunk
-		if err = rows.Scan(&c.Index, &c.State, &c.MessageID, &c.Code, &c.Attempts); err != nil {
+		if err = rows.Scan(&c.Index, &c.State, &c.MessageID, &c.Code, &c.Attempts, &c.OutputReceipt); err != nil {
 			return d, err
 		}
 		d.Chunks = append(d.Chunks, c)
 		states[c.State] = true
 	}
 	d.State = "sent"
-	for _, st := range []string{"uncertain", "failed", "sending", "pending"} {
+	for _, st := range []string{"uncertain", "failed", "sending", "pending", "cancelled"} {
 		if states[st] {
 			d.State = st
 			break
@@ -839,6 +895,13 @@ func (s *Store) Delivery(id string) (Delivery, error) {
 func (s *Store) RetryFailed(id string) (int, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			var cancelled int
+			if err := db.QueryRow("SELECT count(*) FROM replies r JOIN inbound i ON i.id=r.inbound_id WHERE r.id=? AND i.state='cancelled'", id).Scan(&cancelled); err != nil {
+				return nil, err
+			}
+			if cancelled != 0 {
+				return nil, errors.New("request_cancelled")
+			}
 			d, err := delivery(db, id)
 			if err != nil {
 				return nil, err
@@ -860,6 +923,15 @@ func (s *Store) ResolveSent(id string, index int, messageID string) error {
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
+			var structured int
+			if index == 0 {
+				if err := db.QueryRow("SELECT count(*) FROM reply_outputs WHERE reply_id=?", id).Scan(&structured); err != nil {
+					return nil, err
+				}
+			}
+			if structured != 0 {
+				return nil, errors.New("rich_reply_requires_reconcile_reply")
+			}
 			err := changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, id, index))
 			if err == ErrClaim {
 				err = errors.New("only uncertain chunks can be resolved")
@@ -904,7 +976,7 @@ func (s *Store) FeedbackRows() ([]FeedbackRow, error) {
 					rows.Close()
 					return nil, er
 				}
-				if current && s.policy.Accepts(r.Event) {
+				if current && s.policy.Accepts(r.Event) && r.Event.Control == "" {
 					out = append(out, r)
 				}
 			}

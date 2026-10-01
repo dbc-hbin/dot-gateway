@@ -35,7 +35,7 @@ func cancelReplyIfUnsent(db *storeConn, id, code string) (bool, error) {
 			return false, nil
 		case "pending", "failed":
 			unsent = true
-		case "sent":
+		case "sent", "cancelled":
 		default:
 			return false, errors.New("unknown chunk state cannot be cancelled")
 		}

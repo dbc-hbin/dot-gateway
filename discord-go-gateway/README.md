@@ -61,6 +61,13 @@ source. Deletions leave durable tombstones and retire definitely unsent work;
 ambiguous sends remain held. Bounded quoted and thread-starter context carries
 explicit untrusted provenance. See [source revisions](SOURCE_REVISIONS.md).
 
+## Authored file and rich output
+
+Use the versioned manifest workflow for files, images, ordinary audio files and
+bounded explicit embeds. The private outbox/spool, exact consumer commands,
+receipt verification, limits and deployment gates are in [rich output](RICH_OUTPUT.md).
+Plain text remains the default, with link previews suppressed.
+
 ## Components
 
 - DiscordGo handles Gateway protocol/state only. Its REST send/reconnect helpers

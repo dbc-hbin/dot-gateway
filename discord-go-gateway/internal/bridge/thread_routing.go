@@ -288,6 +288,11 @@ func (r *RESTClient) waitWriteBudget(ctx context.Context, method, path string, m
 		if !waited || method == http.MethodGet {
 			return nil
 		}
+		if source, ok := ctx.Value(controlTargetContextKey{}).(Envelope); ok {
+			if err := r.verifyReactionTarget(unmeasuredValidationContext{ctx}, source); err != nil {
+				return err
+			}
+		}
 		check, ok := ctx.Value(threadWriteContextKey{}).(func(context.Context) error)
 		if !ok {
 			return nil

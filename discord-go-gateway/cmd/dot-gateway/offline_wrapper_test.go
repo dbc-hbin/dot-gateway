@@ -24,7 +24,7 @@ func TestOfflineWrapperCancellationAllowlist(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "dot-bridge-cli"), []byte(stub), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"cancel-reply", "retry-failed", "delivery", "gateway", "recover-thread-message", "unknown"} {
+	for _, command := range []string{"cancel-reply", "retry-failed", "delivery", "reply-output-dir", "prune-reply-spool", "verify-reply", "reconcile-reply", "gateway", "recover-thread-message", "unknown"} {
 		cmd := exec.Command("/bin/sh", path, command, "reply-id")
 		cmd.Env = []string{"PATH=/usr/bin:/bin"}
 		out, err := cmd.Output()
@@ -33,7 +33,7 @@ func TestOfflineWrapperCancellationAllowlist(t *testing.T) {
 			t.Fatal("wrapper did not return expected stub output", e)
 		}
 		switch command {
-		case "cancel-reply", "retry-failed", "delivery":
+		case "cancel-reply", "retry-failed", "delivery", "reply-output-dir", "prune-reply-spool":
 			if err != nil || response["command"] != command || response["argument"] != "reply-id" {
 				t.Fatal("offline command did not reach harmless stub", command, response, err)
 			}

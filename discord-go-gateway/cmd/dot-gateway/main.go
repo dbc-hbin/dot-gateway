@@ -35,7 +35,7 @@ func parse(args []string) (string, []string, map[string]string, error) {
 	cmd := args[0]
 	pos := []string{}
 	flags := map[string]string{}
-	bools := map[string]bool{"begin": true, "verified-in-discord": true}
+	bools := map[string]bool{"begin": true, "verified-in-discord": true, "dry-run": true, "fetch": true, "apply-reviewed": true}
 	for i := 1; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "--") {
@@ -80,9 +80,15 @@ func run(args []string) int {
 		output(map[string]string{"error": e.Error()})
 		return 2
 	}
-	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed["reply-output-dir"] = ""
+	allowed["prune-reply-spool"] = ""
+	allowed["verify-reply"] = "chunk"
+	allowed["reconcile-reply"] = "chunk message-id verified-in-discord"
 	allowed["recover-thread-message"] = ""
 	allowed["materialize"] = "claim attachment"
+	allowed["register-commands"] = "dry-run snapshot-file fetch apply-reviewed plan-file"
+	allowed["bind-response"] = "claim message-id"
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
 	spec, ok := allowed[cmd]
@@ -100,14 +106,14 @@ func run(args []string) int {
 	switch cmd {
 	case "recover-thread-message":
 		expected = 2
-	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize":
+	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply":
 		expected = 1
 	}
 	if len(pos) != expected {
 		output(map[string]string{"error": "invalid_arguments"})
 		return 2
 	}
-	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message" || cmd == "materialize", cmd == "check")
+	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message" || cmd == "materialize" || cmd == "verify-reply" || cmd == "reconcile-reply" || cmd == "register-commands" && (f["fetch"] == "true" || f["apply-reviewed"] == "true"), cmd == "check")
 	if e != nil {
 		output(map[string]string{"error": e.Error()})
 		return 2
@@ -129,6 +135,35 @@ func run(args []string) int {
 		output(map[string]any{"configuration": "valid", "scope": scope, "guild_id": nullable(settings.Policy.GuildID), "guild_channel_id": nullable(settings.Policy.GuildChannelID), "guild_mode": nullable(settings.Policy.GuildMode), "message_content_intent": settings.Policy.MessageContentApproved, "discord_transport": transport, "token_checked": false, "network_used": false})
 		return 0
 	}
+	if cmd == "register-commands" && f["fetch"] != "true" && f["apply-reviewed"] != "true" {
+		if f["dry-run"] != "true" || f["snapshot-file"] == "" {
+			output(map[string]string{"error": "only_explicit_dry_run_supported"})
+			return 2
+		}
+		file, err := os.Open(f["snapshot-file"])
+		if err != nil {
+			output(map[string]string{"error": "command_snapshot_read_failed"})
+			return 2
+		}
+		raw, err := io.ReadAll(io.LimitReader(file, 1048577))
+		file.Close()
+		if err != nil {
+			output(map[string]string{"error": "command_snapshot_read_failed"})
+			return 2
+		}
+		snapshot, err := bridge.ParseCommandSnapshot(raw)
+		if err != nil {
+			output(map[string]string{"error": "invalid_command_snapshot"})
+			return 2
+		}
+		plan, err := bridge.PlanGuildCommands(settings, snapshot)
+		if err != nil {
+			output(map[string]string{"error": err.Error()})
+			return 2
+		}
+		output(plan)
+		return 0
+	}
 	trace.setPath(settings.DBPath)
 	trace.mark("store_open_started")
 	store, e := bridge.OpenStore(settings.DBPath, settings.Policy)
@@ -145,7 +180,7 @@ func run(args []string) int {
 		return d, nil
 	}
 	claim := f["claim"]
-	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize") && claim == "" {
+	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response") && claim == "" {
 		output(map[string]string{"error": "claim_required"})
 		return 2
 	}
@@ -166,6 +201,58 @@ func run(args []string) int {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		result, e = rest.MaterializeAttachment(ctx, store, pos[0], claim, f["attachment"])
+	case "register-commands":
+		if f["dry-run"] == "true" && f["fetch"] == "true" && f["apply-reviewed"] == "" && f["plan-file"] == "" && f["snapshot-file"] == "" {
+			var rest *bridge.RESTClient
+			rest, e = bridge.NewRESTClient(settings)
+			if e != nil {
+				break
+			}
+			defer rest.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			var snapshot bridge.CommandSnapshot
+			snapshot, e = rest.CommandSnapshot(ctx, store)
+			if e == nil {
+				var plan bridge.CommandPlan
+				plan, e = bridge.PlanGuildCommands(settings, snapshot)
+				plan.NetworkUsed = true
+				result = plan
+			}
+		} else if f["apply-reviewed"] == "true" && f["plan-file"] != "" && f["dry-run"] == "" && f["fetch"] == "" && f["snapshot-file"] == "" {
+			var file *os.File
+			file, e = os.Open(f["plan-file"])
+			if e != nil {
+				e = errors.New("plan_read_failed")
+				break
+			}
+			raw, err := io.ReadAll(io.LimitReader(file, 1048577))
+			file.Close()
+			if err != nil || len(raw) > 1048576 {
+				e = errors.New("invalid_plan_file")
+				break
+			}
+			var plan bridge.CommandPlan
+			if json.Unmarshal(raw, &plan) != nil {
+				e = errors.New("invalid_plan_file")
+				break
+			}
+			var rest *bridge.RESTClient
+			rest, e = bridge.NewRESTClient(settings)
+			if e != nil {
+				break
+			}
+			defer rest.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			result, e = rest.ApplyGuildCommandPlan(ctx, store, plan)
+		} else {
+			e = errors.New("invalid_registration_mode")
+		}
+	case "bind-response":
+		var binding string
+		binding, e = store.BindPendingResponse(pos[0], claim, f["message-id"])
+		result = map[string]string{"pending_response_id": binding}
 	case "recover-thread-message":
 		var rest *bridge.RESTClient
 		rest, e = bridge.NewRESTClient(settings)
@@ -294,10 +381,82 @@ func run(args []string) int {
 		if pollHealth != nil {
 			_ = pollHealth.Close()
 		}
+	case "prune-reply-spool":
+		var count int
+		count, e = store.PruneReplySpool()
+		result = map[string]int{"removed_files": count}
+	case "reconcile-reply":
+		if f["verified-in-discord"] != "true" || !bridge.Snowflake(f["message-id"]) {
+			e = errors.New("verification_required")
+			break
+		}
+		var index int
+		index, e = integer("chunk", -1)
+		if e != nil || index < 0 {
+			e = errors.New("invalid_chunk")
+			break
+		}
+		var rest *bridge.RESTClient
+		rest, e = bridge.NewRESTClient(settings)
+		if e != nil {
+			break
+		}
+		defer rest.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, e = rest.ReconcileReply(ctx, store, pos[0], index, f["message-id"])
+		if e == nil {
+			result, e = store.Delivery(pos[0])
+			mutated = true
+		}
+	case "verify-reply":
+		var index int
+		index, e = integer("chunk", 0)
+		if e != nil || index < 0 {
+			e = errors.New("invalid_chunk")
+			break
+		}
+		var c bridge.Chunk
+		var receipt bridge.SendResult
+		c, receipt, e = store.ReplyReadback(pos[0], index)
+		if e != nil {
+			break
+		}
+		var rest *bridge.RESTClient
+		rest, e = bridge.NewRESTClient(settings)
+		if e != nil {
+			break
+		}
+		defer rest.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, e = rest.VerifyStoredReply(ctx, c, receipt)
+	case "reply-output-dir":
+		var dir string
+		dir, e = store.ReplyOutputDir()
+		result = map[string]string{"directory": dir}
 	case "reply":
+		if _, manifest := f["manifest-file"]; manifest {
+			if _, text := f["text-file"]; text {
+				e = errors.New("reply_input_conflict")
+				break
+			}
+		}
 		trace.mark("reply_input_open_started")
 		var reader io.Reader = os.Stdin
-		if p, ok := f["text-file"]; ok && p != "-" {
+		inputPath, hasPath := f["text-file"]
+		_, manifest := f["manifest-file"]
+		if manifest {
+			inputPath, hasPath = f["manifest-file"]
+		}
+		if manifest && hasPath && inputPath != "-" {
+			var data []byte
+			data, e = bridge.ReadReplyManifestFile(inputPath)
+			if e != nil {
+				break
+			}
+			reader = strings.NewReader(string(data))
+		} else if p, ok := inputPath, hasPath; ok && p != "-" {
 			var file *os.File
 			file, e = os.Open(p)
 			if e != nil {
@@ -310,7 +469,11 @@ func run(args []string) int {
 		trace.mark("reply_input_open_finished")
 		var data []byte
 		trace.mark("reply_input_read_started")
-		data, e = io.ReadAll(io.LimitReader(reader, 64005))
+		limit := int64(64005)
+		if manifest {
+			limit = bridge.MaxReplyManifestBytes + 1
+		}
+		data, e = io.ReadAll(io.LimitReader(reader, limit))
 		trace.mark("reply_input_read_finished")
 		if e != nil {
 			e = errors.New("reply_read_failed")
@@ -318,7 +481,11 @@ func run(args []string) int {
 		}
 		var id string
 		trace.mark("queue_call_started")
-		id, e = store.QueueReply(pos[0], claim, string(data))
+		if manifest {
+			id, e = store.QueueReplyManifest(pos[0], claim, data)
+		} else {
+			id, e = store.QueueReply(pos[0], claim, string(data))
+		}
 		trace.mark("queue_returned")
 		if e == nil {
 			trace.setInbound(pos[0])

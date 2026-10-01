@@ -219,6 +219,7 @@ type RESTClient struct {
 	diagMu          sync.RWMutex
 	diagnostics     Diagnostics
 	routePermission func(Envelope) bool
+	controlStore    *Store
 }
 
 func NewRESTClient(s Settings) (*RESTClient, error) {
@@ -268,6 +269,9 @@ func (r *RESTClient) Diagnostics() Diagnostics {
 	return r.diagnostics
 }
 func (r *RESTClient) request(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	return r.requestContent(ctx, method, path, body, "application/json")
+}
+func (r *RESTClient) requestContent(ctx context.Context, method, path string, body []byte, contentType string) (*http.Response, error) {
 	if r.closed.Load() {
 		return nil, errors.New("sender_closed")
 	}
@@ -293,7 +297,7 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 	req.Header.Set("Authorization", "Bot "+r.settings.Token)
 	req.Header.Set("User-Agent", "DotTextBridge/1.0 (Go)")
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	if guard, ok := ctx.Value(sendGuardContextKey{}).(func() bool); ok && !guard() {
 		return nil, errSendGuardChanged
@@ -496,11 +500,18 @@ func (r *RESTClient) publishDiagnostics(started time.Time, result SendResult, d 
 func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func() bool, d *Diagnostics) (result SendResult) {
 	started := time.Now()
 	defer func() { r.publishDiagnostics(started, result, d) }()
-	if !r.settings.Policy.Allows(c.Source) || c.ReplyID == "" || c.Index < 0 || !utf8.ValidString(c.Text) || trimText(c.Text) == "" || TextUnits(c.Text) > 1900 {
+	if c.Source.ReplyKind == "interaction" {
+		return SendResult{State: "failed", Code: "interaction_transport_required"}
+	}
+	if !r.settings.Policy.Allows(c.Source) || c.ReplyID == "" || c.Index < 0 || !utf8.ValidString(c.Text) || trimText(c.Text) == "" && c.Output == "" || TextUnits(c.Text) > 1900 {
 		return SendResult{State: "failed", Code: "invalid_route_or_chunk"}
 	}
+	body, contentType, e := BuildReplyBody(c, ReplyStateDir(r.settings.DBPath))
+	if e != nil {
+		return SendResult{State: "failed", Code: symbolicCode(e.Error())}
+	}
 	pre := time.Now()
-	e := r.preflightMeasured(ctx, c.Source, d)
+	e = r.preflightMeasured(ctx, c.Source, d)
 	d.PreflightSeconds = time.Since(pre).Seconds()
 	if e != nil {
 		return SendResult{State: "failed", Code: e.Error()}
@@ -515,6 +526,9 @@ func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func(
 		ctx = context.WithValue(ctx, sendGuardContextKey{}, guard)
 	}
 	ctx = r.threadWriteContext(ctx, c.Source, 0)
+	if c.Source.Control != "" {
+		ctx = context.WithValue(ctx, controlTargetContextKey{}, c.Source)
+	}
 	post := time.Now()
 	ctx, measured := newRequestMeasurement(ctx)
 	defer func() {
@@ -522,9 +536,9 @@ func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func(
 		d.PostSeconds = time.Since(post).Seconds()
 		d.Reused = d.Post.Reused
 	}()
-	resp, e := r.request(ctx, http.MethodPost, "/channels/"+c.Source.ConversationID+"/messages", payload(c))
+	resp, e := r.requestContent(ctx, http.MethodPost, "/channels/"+c.Source.ConversationID+"/messages", body, contentType)
 	if e != nil {
-		if strings.HasPrefix(e.Error(), "preflight_") {
+		if strings.HasPrefix(e.Error(), "preflight_") || strings.HasPrefix(e.Error(), "reaction_") || e.Error() == "source_not_current" {
 			return SendResult{State: "failed", Code: e.Error()}
 		}
 		if errors.Is(e, errSendGuardChanged) {
@@ -552,7 +566,7 @@ func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func(
 	if id == "" {
 		return SendResult{State: "uncertain", Code: "invalid_ack"}
 	}
-	return SendResult{State: "sent", MessageID: id, Code: code}
+	return SendResult{State: "sent", MessageID: id, Code: code, OutputReceipt: replyAckReceipt(ack, c)}
 }
 func jsonString(v json.RawMessage) string {
 	var s string
@@ -561,6 +575,30 @@ func jsonString(v json.RawMessage) string {
 	}
 	return ""
 }
+
+// validateReplyContent permits only Discord's observed single terminal-LF
+// removal after a nonspace rune. All other whitespace/content changes fail.
+func validateReplyContent(actual, expected string) (string, bool) {
+	if actual == expected {
+		return "", true
+	}
+	if !strings.HasSuffix(expected, "\n") || len(expected) <= 1 || actual != expected[:len(expected)-1] {
+		return "", false
+	}
+	previous, _ := utf8.DecodeLastRuneInString(actual)
+	if isTextSpace(previous) {
+		return "", false
+	}
+	return "ack_terminal_lf_removed", true
+}
+func requiredJSONString(v json.RawMessage) (string, bool) {
+	var value *string
+	if json.Unmarshal(v, &value) != nil || value == nil {
+		return "", false
+	}
+	return *value, true
+}
+
 func validateAck(a map[string]json.RawMessage, c Chunk, botID string) (string, string) {
 	id := jsonString(a["id"])
 	if !Snowflake(id) || jsonString(a["channel_id"]) != c.Source.ConversationID {
@@ -579,17 +617,10 @@ func validateAck(a map[string]json.RawMessage, c Chunk, botID string) (string, s
 	if v, ok := a["nonce"]; ok && jsonString(v) != Nonce(c) {
 		return "", ""
 	}
-	actual := jsonString(a["content"])
-	code := ""
-	if actual != c.Text {
-		if !strings.HasSuffix(c.Text, "\n") || len(c.Text) <= 1 || actual != c.Text[:len(c.Text)-1] {
-			return "", ""
-		}
-		prev, _ := utf8.DecodeLastRuneInString(actual)
-		if isTextSpace(prev) {
-			return "", ""
-		}
-		code = "ack_terminal_lf_removed"
+	actual, present := requiredJSONString(a["content"])
+	code, valid := validateReplyContent(actual, c.Text)
+	if !present || !valid {
+		return "", ""
 	}
 	// Require full immutable reference even when content is unchanged.
 	var ref struct {
@@ -600,10 +631,13 @@ func validateAck(a map[string]json.RawMessage, c Chunk, botID string) (string, s
 	if json.Unmarshal(a["message_reference"], &ref) != nil || ref.MessageID != c.Source.EventID || ref.ChannelID != c.Source.ConversationID || ref.GuildID != "" && ref.GuildID != c.Source.GuildID {
 		return "", ""
 	}
+	if err := ValidateReplyOutputAck(a, c); err != nil {
+		return "", ""
+	}
 	return id, code
 }
 func (r *RESTClient) feedback(ctx context.Context, s Envelope, method, suffix string) error {
-	if !r.settings.Policy.Allows(s) {
+	if s.Control != "" || !r.settings.Policy.Allows(s) {
 		return errors.New("invalid_feedback_route")
 	}
 	extra := uint64(0)

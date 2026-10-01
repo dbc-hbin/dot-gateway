@@ -194,6 +194,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	}
 	defer rest.Close()
 	rest.contextEnabled = true
+	rest.controlStore = store
 	g := &gatewayState{state: "connecting"}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -231,9 +232,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	s.SyncEvents = true
 	s.Client = rest.Client()
 	rest.routePermission = func(e Envelope) bool { return gatewayRoutePermissions(g, s, settings, e) }
-	s.Identify.Intents = discordgo.IntentsDirectMessages
+	s.Identify.Intents = discordgo.IntentsDirectMessages | discordgo.IntentsDirectMessageReactions
 	if settings.Policy.GuildID != "" {
-		s.Identify.Intents |= discordgo.IntentsGuilds | discordgo.IntentsGuildMessages
+		s.Identify.Intents |= discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildMessageReactions
 	}
 	if settings.Policy.MessageContentApproved {
 		s.Identify.Intents |= discordgo.IntentsMessageContent
@@ -246,6 +247,72 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		queueGatewayValidation(validate, g.epoch.Load())
 	}
 	incoming := make(chan sourceGatewayEvent, 1000)
+	controls, e := NewInteractionService(settings, store, func() { hub.Notify(); NotifyFile(settings.DBPath + ".sock.wake") })
+	if e != nil {
+		return e
+	}
+	defer controls.Close()
+	if err := store.RecoverInteractionTokens(); err != nil {
+		return err
+	}
+	controls.rest.routePermission = rest.routePermission
+	// Bound concurrency without placing acknowledgements behind message lookup.
+	controlSlots := make(chan struct{}, 16)
+	var controlWG sync.WaitGroup
+	startControl := func(fn func()) {
+		select {
+		case controlSlots <- struct{}{}:
+			controlWG.Add(1)
+			go func() { defer controlWG.Done(); defer func() { <-controlSlots }(); fn() }()
+		default:
+		}
+	}
+	defer func() { cancel(); controlWG.Wait() }()
+	s.AddHandler(func(_ *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i != nil && i.Interaction != nil {
+			received := time.Now()
+			startControl(func() { controls.Handle(ctx, i.Interaction, received) })
+		}
+	})
+
+	type reactionInput struct {
+		event *discordgo.MessageReaction
+		added bool
+	}
+	reactions := make(chan reactionInput, 1000)
+	controlWG.Add(1)
+	go func() {
+		defer controlWG.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case in := <-reactions:
+				work, done := context.WithTimeout(ctx, 5*time.Second)
+				controls.HandleReaction(work, in.event, in.added)
+				done()
+			}
+		}
+	}()
+	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageReactionAdd) {
+		if m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
+			select {
+			case reactions <- reactionInput{m.MessageReaction, true}:
+			default:
+				fail("gateway_control_capacity_exceeded")
+			}
+		}
+	})
+	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageReactionRemove) {
+		if m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
+			select {
+			case reactions <- reactionInput{m.MessageReaction, false}:
+			default:
+				fail("gateway_control_capacity_exceeded")
+			}
+		}
+	})
+
 	s.AddHandler(func(_ *discordgo.Session, r *discordgo.Ready) {
 		if r.User == nil || r.User.ID != settings.ExpectedBotID || !r.User.Bot {
 			fail("bot_identity_mismatch")
@@ -379,8 +446,13 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	start(func() {
 		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
+			if c.Source.ReplyKind == "interaction" {
+				return controls.Send(ctx, c, func() bool {
+					return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && gatewayRoutePermissions(g, s, settings, c.Source)
+				})
+			}
 			return rest.SendCurrentSourceMeasured(ctx, store, c, func() bool {
-				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && gatewayRoutePermissions(g, s, settings, c.Source)
+				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && gatewayRoutePermissions(g, s, settings, c.Source) && store.controlRequestCurrent(c.Source)
 			})
 		}); err != nil {
 			fail("dispatcher_failed")
