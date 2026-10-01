@@ -160,3 +160,31 @@ See [LATENCY_IMPROVEMENTS.md](LATENCY_IMPROVEMENTS.md) for claim paging, combine
 file/socket wakeups, opt-in content-free CLI phase traces, immutable per-send
 metrics, synthetic benchmarks, and measurement limitations. No model/provider
 or live runtime change is implied by these source improvements.
+
+## Cancelling an undeliverable reply
+
+`cancel-reply REPLY_ID` durably abandons a queued or known-failed reply's unsent
+remainder and releases later replies in that conversation. Inspect `delivery`
+first: cancellation preserves sent/failed chunk evidence, including remote IDs,
+error codes and attempt counts. It records a timestamped cancellation reason,
+marks pending suffix chunks `cancelled`, and reports the whole reply as
+`cancelled`, never `sent`. Status exposes `cancelled_replies`; lifecycle feedback
+uses the existing failure path and does not restart typing. Cancellation is
+idempotent, survives restart and cannot be undone by `retry-failed` or submitting
+the same reply again.
+
+Sending and uncertain chunks cannot be cancelled. Reconcile an ambiguous send
+using the existing verified-remote-message workflow first. Known HTTP failures
+are not automatically abandoned because generic HTTP 400/404 does not prove
+that the original reply reference was deleted. `retry-failed` remains available
+for an uncancelled reply when its actual cause has been corrected. No migration
+or startup pass cancels existing failures or replays historical work.
+
+Replies are split losslessly at at most 1,900 UTF-16 units. Splitting prefers late
+line/word boundaries, keeps short fenced blocks together, protects common
+combining/emoji/Hangul sequences, and redistributes short trailing whitespace
+instead of rejecting valid boundary-length replies. A cluster larger than one
+message or a whitespace run that cannot be divided into nonblank messages is
+rejected explicitly. This is a conservative boundary parser, not full Unicode
+or Markdown segmentation. Long code fences remain verbatim and can render across
+Discord messages without a closing/reopening fence; no synthetic text is added.

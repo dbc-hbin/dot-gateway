@@ -80,7 +80,7 @@ func run(args []string) int {
 		output(map[string]string{"error": e.Error()})
 		return 2
 	}
-	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
 	allowed["recover-thread-message"] = ""
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
@@ -99,7 +99,7 @@ func run(args []string) int {
 	switch cmd {
 	case "recover-thread-message":
 		expected = 2
-	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "resolve-sent":
+	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent":
 		expected = 1
 	}
 	if len(pos) != expected {
@@ -339,6 +339,9 @@ func run(args []string) int {
 		var n int
 		n, e = store.RetryFailed(pos[0])
 		result = map[string]int{"requeued_chunks": n}
+		mutated = e == nil
+	case "cancel-reply":
+		result, e = store.CancelReply(pos[0])
 		mutated = e == nil
 	case "resolve-sent":
 		if f["verified-in-discord"] != "true" || f["message-id"] == "" {

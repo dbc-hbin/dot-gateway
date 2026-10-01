@@ -20,7 +20,7 @@ func TestSplitUTF16(t *testing.T) {
 	}
 }
 func TestSplitReject(t *testing.T) {
-	for _, s := range []string{"", "  ", strings.Repeat("x", 16001), strings.Repeat("x", 1900) + " ", string([]byte{255})} {
+	for _, s := range []string{"", "  ", strings.Repeat("x", 16001), string([]byte{255})} {
 		if _, e := SplitText(s); e == nil {
 			t.Fatal("accepted invalid text")
 		}

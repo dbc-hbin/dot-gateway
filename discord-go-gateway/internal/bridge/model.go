@@ -2,10 +2,8 @@ package bridge
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Envelope is a value snapshot. Strings avoid shared mutable routing state.
@@ -47,32 +45,6 @@ func TextUnits(s string) int {
 		}
 	}
 	return n
-}
-func SplitText(s string) ([]string, error) {
-	if !utf8.ValidString(s) || trimText(s) == "" || TextUnits(s) > 16000 {
-		return nil, errors.New("invalid_reply_text")
-	}
-	parts := []string{}
-	start, used := 0, 0
-	for i, r := range s {
-		size := 1
-		if r > 0xffff {
-			size = 2
-		}
-		if used+size > 1900 {
-			parts = append(parts, s[start:i])
-			start = i
-			used = 0
-		}
-		used += size
-	}
-	parts = append(parts, s[start:])
-	for _, part := range parts {
-		if trimText(part) == "" {
-			return nil, errors.New("whitespace_only_chunk")
-		}
-	}
-	return parts, nil
 }
 
 // MarshalJSON preserves the Python envelope contract, including explicit nulls.

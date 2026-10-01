@@ -35,10 +35,11 @@ type DeliveryChunk struct {
 	Attempts  int     `json:"attempts"`
 }
 type Delivery struct {
-	ReplyID   string          `json:"reply_id"`
-	InboundID string          `json:"inbound_id"`
-	State     string          `json:"state"`
-	Chunks    []DeliveryChunk `json:"chunks"`
+	ReplyID      string             `json:"reply_id"`
+	InboundID    string             `json:"inbound_id"`
+	State        string             `json:"state"`
+	Chunks       []DeliveryChunk    `json:"chunks"`
+	Cancellation *ReplyCancellation `json:"cancellation,omitempty"`
 }
 type FeedbackRow struct {
 	ID              string   `json:"id"`
@@ -235,6 +236,7 @@ func initializeStore(db *storeConn) error {
 CREATE TABLE IF NOT EXISTS inbound(id TEXT PRIMARY KEY,platform TEXT NOT NULL,event_id TEXT NOT NULL,envelope TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',claim TEXT,lease_until REAL,created REAL NOT NULL,UNIQUE(platform,event_id));
 CREATE TABLE IF NOT EXISTS replies(id TEXT PRIMARY KEY,inbound_id TEXT NOT NULL UNIQUE REFERENCES inbound(id),text TEXT NOT NULL,created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS chunks(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',message_id TEXT,code TEXT,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(reply_id,idx));
+CREATE TABLE IF NOT EXISTS reply_cancellations(reply_id TEXT PRIMARY KEY REFERENCES replies(id),cancelled_at REAL NOT NULL,code TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS processing(inbound_id TEXT PRIMARY KEY REFERENCES inbound(id),claim TEXT NOT NULL,until REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS consumer_claims(consumer TEXT PRIMARY KEY,inbound_id TEXT NOT NULL REFERENCES inbound(id),claim TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback(inbound_id TEXT PRIMARY KEY REFERENCES inbound(id),stage TEXT NOT NULL);
@@ -618,7 +620,7 @@ func (s *Store) RecoverInterrupted() (int, error) {
 func (s *Store) NextChunk() (*Chunk, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state!='sent') ORDER BY r.created,r.rowid,c.idx`)
+			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=c.reply_id) AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state!='sent' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=older.id)) ORDER BY r.created,r.rowid,c.idx`)
 			if err != nil {
 				return nil, err
 			}
@@ -760,7 +762,25 @@ func delivery(db *storeConn, id string) (Delivery, error) {
 	if d.State == "pending" {
 		d.State = "queued"
 	}
-	return d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return d, err
+	}
+	// Close the cursor before a second query on the store's pinned connection.
+	if err := rows.Close(); err != nil {
+		return d, err
+	}
+	cancelled, err := replyCancelled(db, id)
+	if err != nil {
+		return d, err
+	}
+	if cancelled {
+		d.State = "cancelled"
+		d.Cancellation = &ReplyCancellation{}
+		if err := db.QueryRow("SELECT cancelled_at,code FROM reply_cancellations WHERE reply_id=?", id).Scan(&d.Cancellation.At, &d.Cancellation.Code); err != nil {
+			return d, err
+		}
+	}
+	return d, nil
 }
 func (s *Store) Delivery(id string) (Delivery, error) {
 	v, err := s.call(func(db *storeConn) (any, error) { return delivery(db, id) })
@@ -772,8 +792,12 @@ func (s *Store) Delivery(id string) (Delivery, error) {
 func (s *Store) RetryFailed(id string) (int, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			if _, err := delivery(db, id); err != nil {
+			d, err := delivery(db, id)
+			if err != nil {
 				return nil, err
+			}
+			if d.State == "cancelled" {
+				return nil, errors.New("cancelled replies cannot be retried")
 			}
 			return affected(db.Exec("UPDATE chunks SET state='pending',code=NULL WHERE reply_id=? AND state='failed'", id))
 		})
@@ -833,6 +857,10 @@ func (s *Store) FeedbackRows() ([]FeedbackRow, error) {
 						return nil, err
 					}
 					r.Delivery = d.State
+					if d.State == "cancelled" {
+						// Cancellation is a terminal non-delivery, never success.
+						r.Delivery = "failed"
+					}
 				}
 				r.Thinking = r.State == "claimed" && r.ProcessingClaim == r.Claim && r.ProcessingUntil > now && r.LeaseUntil > now
 			}
@@ -936,6 +964,11 @@ func (s *Store) Status() (map[string]any, error) {
 				}
 				out[key] = counts
 			}
+			var cancelledReplies int
+			if err := db.QueryRow("SELECT count(*) FROM reply_cancellations").Scan(&cancelledReplies); err != nil {
+				return nil, err
+			}
+			out["cancelled_replies"] = cancelledReplies
 			rows, err := db.Query("SELECT stage,count(*),avg(duration_ms),max(duration_ms) FROM timings GROUP BY stage ORDER BY stage")
 			if err != nil {
 				return nil, err
