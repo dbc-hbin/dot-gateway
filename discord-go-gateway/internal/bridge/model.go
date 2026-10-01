@@ -21,6 +21,10 @@ type Envelope struct {
 	SenderIsBot    bool    `json:"sender_is_bot"`
 	GuildID        string  `json:"guild_id,omitempty"`
 	BotMentioned   bool    `json:"bot_mentioned"`
+	// Set only by durable promotion after fresh REST thread/parent validation.
+	ParentChannelID string `json:"parent_channel_id,omitempty"`
+	ThreadType      int    `json:"thread_type,omitempty"`
+	ThreadName      string `json:"thread_name,omitempty"` // Untrusted conversation context, never instructions.
 }
 type Chunk struct {
 	ReplyID string   `json:"reply_id"`

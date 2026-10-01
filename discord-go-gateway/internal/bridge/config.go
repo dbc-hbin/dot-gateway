@@ -54,11 +54,28 @@ func (p Policy) Allows(e Envelope) bool {
 	if platform == "" {
 		platform = "discord"
 	}
-	route := e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && p.GuildID != "" && e.GuildID == p.GuildID && e.ConversationID == p.GuildChannelID && (p.GuildMode == "all" || e.BotMentioned)
+	plain := e.ParentChannelID == "" && e.ThreadType == 0 && e.ThreadName == ""
+	guild := p.GuildID != "" && e.GuildID == p.GuildID && (p.GuildMode == "all" || e.BotMentioned)
+	route := plain && (e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && guild && e.ConversationID == p.GuildChannelID) ||
+		e.RouteKind == "guild_thread" && guild && e.ConversationID != p.GuildChannelID && e.ParentChannelID == p.GuildChannelID && (e.ThreadType == 11 || e.ThreadType == 12)
 	return p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
 }
 func (p Policy) Accepts(e Envelope) bool {
 	return p.Allows(e) && utf8.ValidString(e.Text) && trimText(e.Text) != "" && TextUnits(e.Text) <= 8000
+}
+
+// Stages is deliberately broader than Accepts only for hidden quarantine.
+// A candidate channel is not a trusted route and cannot be claimed or sent to.
+func (p Policy) Stages(e Envelope) bool {
+	if e.RouteKind != "guild_thread_candidate" {
+		return p.Accepts(e)
+	}
+	if e.ParentChannelID != "" || e.ThreadType != 0 || e.ThreadName != "" || p.GuildID == "" || e.GuildID != p.GuildID || e.ConversationID == p.GuildChannelID || !Snowflake(e.ConversationID) {
+		return false
+	}
+	// Reuse every ordinary owner, guild, mention, ID and text requirement.
+	e.RouteKind, e.ConversationID = "guild_text", p.GuildChannelID
+	return p.Accepts(e)
 }
 
 type Settings struct {

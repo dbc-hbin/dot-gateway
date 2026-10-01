@@ -39,6 +39,14 @@ observations and backlog separately; it explicitly does not prove stdout receipt
 or reasoning liveness. There is no supported inactive-session Discord wake in
 this integration, and no reboot auto-start guarantee.
 
+## Verified child threads
+
+Owner messages in public and existing-member private threads under the pinned
+conversation channel now pass durable quarantine and fresh parent/permission
+validation. Replies and feedback stay in the thread. See [thread routing and
+point-message recovery](THREAD_ROUTING.md) for exact scope, lifecycle restrictions
+and the unavoidable Discord final-GET-to-POST archive race.
+
 ## Components
 
 - DiscordGo handles Gateway protocol/state only. Its REST send/reconnect helpers
@@ -103,7 +111,8 @@ token, live database or Discord endpoint.
 The original `DISCORD_OWNER_ID`, `DISCORD_ALLOWED_DM_IDS`, pinned bot/guild/channel,
 guild mode, approved Message Content, `BRIDGE_DB`, HTTP keepalive and explicit
 credential-free proxy environment settings are retained. Only live `gateway`
-(alias `run-discord`) loads `DISCORD_BOT_TOKEN_FILE`. Offline CLI commands never
+(alias `run-discord`) and explicit `recover-thread-message` load
+`DISCORD_BOT_TOKEN_FILE`. Offline CLI commands never
 need credentials or connect to Discord. The token loader rejects symlinks,
 nonregular files, foreign ownership and any group/other permission.
 

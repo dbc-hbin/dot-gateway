@@ -81,6 +81,7 @@ func run(args []string) int {
 		return 2
 	}
 	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed["recover-thread-message"] = ""
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
 	spec, ok := allowed[cmd]
@@ -96,6 +97,8 @@ func run(args []string) int {
 	}
 	expected := 0
 	switch cmd {
+	case "recover-thread-message":
+		expected = 2
 	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "resolve-sent":
 		expected = 1
 	}
@@ -103,7 +106,7 @@ func run(args []string) int {
 		output(map[string]string{"error": "invalid_arguments"})
 		return 2
 	}
-	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord", cmd == "check")
+	settings, e := bridge.LoadSettings(cmd == "gateway" || cmd == "run-discord" || cmd == "recover-thread-message", cmd == "check")
 	if e != nil {
 		output(map[string]string{"error": e.Error()})
 		return 2
@@ -120,7 +123,7 @@ func run(args []string) int {
 		}
 		scope := "owner_only_dm"
 		if settings.Policy.GuildID != "" {
-			scope = "owner_dm_and_pinned_guild_channel"
+			scope = "owner_dm_and_pinned_guild_channel_and_verified_child_threads"
 		}
 		output(map[string]any{"configuration": "valid", "scope": scope, "guild_id": nullable(settings.Policy.GuildID), "guild_channel_id": nullable(settings.Policy.GuildChannelID), "guild_mode": nullable(settings.Policy.GuildMode), "message_content_intent": settings.Policy.MessageContentApproved, "discord_transport": transport, "token_checked": false, "network_used": false})
 		return 0
@@ -148,6 +151,19 @@ func run(args []string) int {
 	var result any
 	mutated := false
 	switch cmd {
+	case "recover-thread-message":
+		var rest *bridge.RESTClient
+		rest, e = bridge.NewRESTClient(settings)
+		if e != nil {
+			break
+		}
+		defer rest.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		var outcome string
+		outcome, e = rest.RecoverThreadMessage(ctx, store, pos[0], pos[1])
+		mutated = e == nil && outcome == "validation_staged"
+		result = map[string]string{"recovery": outcome}
 	case "gateway", "run-discord":
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()

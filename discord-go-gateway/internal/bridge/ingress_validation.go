@@ -28,12 +28,22 @@ func initIngressValidation(db *storeConn) error {
 
 func activeInboundCount(db *storeConn) (int, error) {
 	var n int
-	err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE state IN ('pending','claimed')) + (SELECT count(*) FROM ingress_validation)`).Scan(&n)
+	err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE state IN ('pending','claimed')) + (SELECT count(*) FROM ingress_validation WHERE state IN ('pending','blocked'))`).Scan(&n)
 	return n, err
 }
 
+func (s *Store) stages(e Envelope) bool {
+	if policy, ok := s.policy.(interface{ Stages(Envelope) bool }); ok {
+		return policy.Stages(e)
+	}
+	return s.policy.Accepts(e)
+}
+
 func (s *Store) StageIngress(e Envelope) (string, error) {
-	if !s.policy.Accepts(e) {
+	if e.RouteKind == "guild_thread" {
+		e.RouteKind, e.ParentChannelID, e.ThreadType, e.ThreadName = "guild_thread_candidate", "", 0, ""
+	}
+	if !s.stages(e) {
 		return "rejected", nil
 	}
 	v, err := s.call(func(db *storeConn) (any, error) {
@@ -78,7 +88,7 @@ func (s *Store) NextValidation(now float64) (*ValidationInput, error) {
 		// Within a conversation, later events may not overtake unvalidated work.
 		err := db.QueryRow(`SELECT v.id,v.envelope,v.created,v.attempts FROM ingress_validation v
 			WHERE v.state='pending' AND v.next_attempt<=? AND NOT EXISTS(
-				SELECT 1 FROM ingress_validation older WHERE older.platform=v.platform
+				SELECT 1 FROM ingress_validation older WHERE older.state IN ('pending','blocked') AND older.platform=v.platform
 				AND json_extract(older.envelope,'$.conversation_id')=json_extract(v.envelope,'$.conversation_id')
 				AND (older.created<v.created OR (older.created=v.created AND older.rowid<v.rowid)))
 			ORDER BY v.created,v.rowid LIMIT 1`, now).Scan(&in.ID, &raw, &in.Created, &in.Attempts)
@@ -110,6 +120,21 @@ func (s *Store) DeferValidation(id, code string, until float64, blocked bool) er
 	return err
 }
 
+// A proven out-of-scope candidate is terminal, not unavailable trusted work.
+// Keep only bounded, content-free dedup tombstones outside active capacity.
+func (s *Store) rejectValidation(id string) error {
+	_, err := s.call(func(db *storeConn) (any, error) {
+		return transact(db, func(db *storeConn) (any, error) {
+			if err := changedOne(db.Exec(`UPDATE ingress_validation SET state='rejected',envelope='{}',code='out_of_scope' WHERE id=? AND state='pending'`, id)); err != nil {
+				return nil, err
+			}
+			_, err := db.Exec(`DELETE FROM ingress_validation WHERE state='rejected' AND id NOT IN (SELECT id FROM ingress_validation WHERE state='rejected' ORDER BY created DESC,rowid DESC LIMIT 1000)`)
+			return nil, err
+		})
+	})
+	return err
+}
+
 // Only call after a new connection epoch has passed identity/channel validation.
 func (s *Store) ResumeValidation() error {
 	_, err := s.call(func(db *storeConn) (any, error) {
@@ -122,6 +147,21 @@ func (s *Store) ResumeValidation() error {
 // PromoteValidation is called only after exact channel validation. It rechecks
 // current admission policy and promotes the identical durable envelope/id/time.
 func (s *Store) PromoteValidation(in ValidationInput) (string, error) {
+	return s.promoteValidation(in, nil)
+}
+
+// Thread proof is local to the validator. Only routing metadata can change;
+// original message identity, channel, sender, content and receipt time stay bound.
+func (s *Store) promoteThreadValidation(in ValidationInput, verified Envelope) (string, error) {
+	original := verified
+	original.RouteKind, original.ParentChannelID, original.ThreadType, original.ThreadName = "guild_thread_candidate", "", 0, ""
+	if in.Event.RouteKind != "guild_thread_candidate" || original != in.Event || verified.RouteKind != "guild_thread" || !s.policy.Accepts(verified) {
+		return "", errors.New("validation_input_changed")
+	}
+	return s.promoteValidation(in, &verified)
+}
+
+func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (string, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
 			var raw, state string
@@ -135,6 +175,14 @@ func (s *Store) PromoteValidation(in ValidationInput) (string, error) {
 			}
 			if state != "pending" || event != in.Event || created != in.Created {
 				return nil, errors.New("validation_input_changed")
+			}
+			if verified != nil {
+				event = *verified
+				encoded, err := json.Marshal(event)
+				if err != nil {
+					return nil, err
+				}
+				raw = string(encoded)
 			}
 			if !s.policy.Accepts(event) {
 				_, err := db.Exec(`UPDATE ingress_validation SET state='blocked',code='authorization_revoked' WHERE id=?`, in.ID)

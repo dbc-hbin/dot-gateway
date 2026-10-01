@@ -92,8 +92,8 @@ func guildPermissions(s *discordgo.Session, c Settings) bool {
 		return false
 	}
 	p, e := s.State.UserChannelPermissions(c.ExpectedBotID, c.Policy.GuildChannelID)
-	need := int64(discordgo.PermissionViewChannel | discordgo.PermissionSendMessages | discordgo.PermissionReadMessageHistory)
-	return e == nil && p&need == need
+	need := int64(discordgo.PermissionViewChannel | discordgo.PermissionReadMessageHistory)
+	return e == nil && (p&discordgo.PermissionAdministrator != 0 || p&need == need && p&int64(discordgo.PermissionSendMessages|discordgo.PermissionSendMessagesInThreads) != 0)
 }
 
 // ClassifyGatewayError preserves the supervisor's permanent/transient contract.
@@ -217,6 +217,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	s.MaxRestRetries = 0
 	s.SyncEvents = true
 	s.Client = rest.Client()
+	rest.routePermission = func(e Envelope) bool { return guildRoutePermissions(s, settings, e) }
 	s.Identify.Intents = discordgo.IntentsDirectMessages
 	if settings.Policy.GuildID != "" {
 		s.Identify.Intents |= discordgo.IntentsGuilds | discordgo.IntentsGuildMessages
@@ -340,14 +341,14 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
 			return rest.SendGuardedMeasured(ctx, c, func() bool {
-				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && guildPermissions(s, settings)
+				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && guildRoutePermissions(s, settings, c.Source)
 			})
 		}); err != nil {
 			fail("dispatcher_failed")
 		}
 	})
 	start(func() {
-		if err := diagnosticLoop(ctx, store, rest, hub, g, func() bool { return guildPermissions(s, settings) }); err != nil {
+		if err := diagnosticLoop(ctx, store, rest, hub, g, func() bool { return guildRoutePermissions(s, settings, Envelope{RouteKind: "guild_text"}) }); err != nil {
 			fail("diagnostic_dispatch_failed")
 		}
 	})
@@ -568,22 +569,25 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 }
 
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
-	if m.GuildID != "" && (m.GuildID != s.Policy.GuildID || m.ChannelID != s.Policy.GuildChannelID) {
+	if m == nil || m.Author == nil || m.Author.ID != s.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID) {
 		return "rejected", nil
 	}
 	event := Envelope{Platform: "discord", EventID: m.ID, ConversationID: m.ChannelID, SenderID: m.Author.ID, Text: m.Content, ReceivedAt: wall(), RouteKind: "dm", GuildID: m.GuildID, SenderIsBot: m.Author.Bot}
 	if m.GuildID != "" {
 		event.RouteKind = "guild_text"
+		if m.ChannelID != s.Policy.GuildChannelID {
+			event.RouteKind = "guild_thread_candidate"
+		}
 	}
 	for _, u := range m.Mentions {
-		if u.ID == s.ExpectedBotID {
+		if u != nil && u.ID == s.ExpectedBotID {
 			event.BotMentioned = true
 		}
 	}
 	if m.MessageReference != nil {
 		event.ReplyToEventID = m.MessageReference.MessageID
 	}
-	if !s.Policy.Accepts(event) {
+	if !s.Policy.Stages(event) {
 		return "rejected", nil
 	}
 	// Durable quarantine precedes all network lookup. It is deliberately separate

@@ -28,10 +28,15 @@ type User struct {
 	Bot bool   `json:"bot"`
 }
 type Channel struct {
-	ID         string `json:"id"`
-	Type       int    `json:"type"`
-	GuildID    string `json:"guild_id"`
-	Recipients []User `json:"recipients"`
+	Name                 string                `json:"name"`
+	ID                   string                `json:"id"`
+	Type                 int                   `json:"type"`
+	GuildID              string                `json:"guild_id"`
+	Recipients           []User                `json:"recipients"`
+	ParentID             string                `json:"parent_id"`
+	ThreadMetadata       *ThreadMetadata       `json:"thread_metadata"`
+	Member               *ThreadMember         `json:"member"`
+	PermissionOverwrites []PermissionOverwrite `json:"permission_overwrites"`
 }
 
 // RequestDiagnostics is a bounded, content-free value snapshot for one HTTP request.
@@ -201,17 +206,18 @@ func (b *measuredResponseBody) Close() error {
 }
 
 type RESTClient struct {
-	settings    Settings
-	client      *http.Client
-	baseURL     string
-	closed      atomic.Bool
-	sendMu      sync.Mutex
-	limitMu     sync.Mutex
-	limits      map[string]time.Time
-	buckets     map[string]string
-	globalUntil time.Time
-	diagMu      sync.RWMutex
-	diagnostics Diagnostics
+	settings        Settings
+	client          *http.Client
+	baseURL         string
+	closed          atomic.Bool
+	sendMu          sync.Mutex
+	limitMu         sync.Mutex
+	limits          map[string]time.Time
+	buckets         map[string]string
+	globalUntil     time.Time
+	diagMu          sync.RWMutex
+	diagnostics     Diagnostics
+	routePermission func(Envelope) bool
 }
 
 func NewRESTClient(s Settings) (*RESTClient, error) {
@@ -265,7 +271,7 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 		return nil, errors.New("sender_closed")
 	}
 	measurement, _ := ctx.Value(requestMeasurementKey{}).(*requestMeasurement)
-	if err := r.waitLimitMeasured(ctx, method, path, measurement); err != nil {
+	if err := r.waitWriteBudget(ctx, method, path, measurement); err != nil {
 		return nil, err
 	}
 	if guard, ok := ctx.Value(sendGuardContextKey{}).(func() bool); ok && !guard() {
@@ -348,16 +354,16 @@ func (r *RESTClient) Channel(ctx context.Context, id string) (Channel, error) {
 	var raw map[string]json.RawMessage
 	e := r.get(ctx, "/channels/"+id, &raw)
 	if e == nil {
-		if _, ok := raw["type"]; !ok {
-			return c, errors.New("preflight_channel_mismatch")
+		if value, ok := raw["type"]; !ok || string(value) == "null" {
+			return c, errors.New("preflight_channel_invalid")
 		}
 		b, _ := json.Marshal(raw)
 		if json.Unmarshal(b, &c) != nil {
-			return c, errors.New("preflight_channel_mismatch")
+			return c, errors.New("preflight_channel_invalid")
 		}
 	}
 	if e == nil && c.ID != id {
-		e = errors.New("preflight_channel_mismatch")
+		e = errors.New("preflight_channel_invalid")
 	}
 	return c, e
 }
@@ -366,7 +372,14 @@ func (r *RESTClient) ValidateChannel(c Channel, s Envelope) error {
 		return errors.New("preflight_channel_mismatch")
 	}
 	p := r.settings.Policy
-	if s.RouteKind == "guild_text" {
+	if s.RouteKind == "guild_thread" {
+		if (c.Type == 11 || c.Type == 12) && (!Snowflake(c.GuildID) || !Snowflake(c.ParentID)) {
+			return errors.New("preflight_channel_invalid")
+		}
+		if c.GuildID != p.GuildID || s.GuildID != p.GuildID || c.ParentID != p.GuildChannelID || s.ParentChannelID != p.GuildChannelID || c.Type != s.ThreadType || (c.Type != 11 && c.Type != 12) || c.ID == p.GuildChannelID {
+			return errors.New("preflight_channel_mismatch")
+		}
+	} else if s.RouteKind == "guild_text" {
 		if c.Type != 0 || c.GuildID != p.GuildID || c.ID != p.GuildChannelID || s.GuildID != p.GuildID {
 			return errors.New("preflight_channel_mismatch")
 		}
@@ -400,6 +413,7 @@ func (r *RESTClient) preflightMeasured(ctx context.Context, s Envelope, diagnost
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var identityErr, channelErr error
+	var channel Channel
 	var identityMetrics, channelMetrics RequestDiagnostics
 	go func() {
 		defer wg.Done()
@@ -416,11 +430,16 @@ func (r *RESTClient) preflightMeasured(ctx context.Context, s Envelope, diagnost
 		defer wg.Done()
 		channelCtx, measured := newRequestMeasurement(ctx)
 		c, e := r.Channel(channelCtx, s.ConversationID)
+		channel = c
+		channelMetrics = measured.finish()
 		if e == nil {
-			e = r.ValidateChannel(c, s)
+			if s.RouteKind == "guild_thread" {
+				e = r.ValidateChannel(c, s)
+			} else {
+				e = r.validateRoute(ctx, c, s)
+			}
 		}
 		channelErr = e
-		channelMetrics = measured.finish()
 	}()
 	wg.Wait()
 	if diagnostics != nil {
@@ -429,6 +448,9 @@ func (r *RESTClient) preflightMeasured(ctx context.Context, s Envelope, diagnost
 	}
 	if identityErr != nil {
 		return identityErr
+	}
+	if channelErr == nil && s.RouteKind == "guild_thread" {
+		return r.validateRoute(ctx, channel, s)
 	}
 	return channelErr
 }
@@ -488,6 +510,7 @@ func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func(
 	if guard != nil {
 		ctx = context.WithValue(ctx, sendGuardContextKey{}, guard)
 	}
+	ctx = r.threadWriteContext(ctx, c.Source, 0)
 	post := time.Now()
 	ctx, measured := newRequestMeasurement(ctx)
 	defer func() {
@@ -497,6 +520,9 @@ func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func(
 	}()
 	resp, e := r.request(ctx, http.MethodPost, "/channels/"+c.Source.ConversationID+"/messages", payload(c))
 	if e != nil {
+		if strings.HasPrefix(e.Error(), "preflight_") {
+			return SendResult{State: "failed", Code: e.Error()}
+		}
 		if errors.Is(e, errSendGuardChanged) {
 			return SendResult{State: "failed", Code: "connection_changed_before_send"}
 		}
@@ -576,19 +602,39 @@ func (r *RESTClient) feedback(ctx context.Context, s Envelope, method, suffix st
 	if !r.settings.Policy.Allows(s) {
 		return errors.New("invalid_feedback_route")
 	}
-	c, e := r.Channel(ctx, s.ConversationID)
-	if e != nil {
-		return e
+	extra := uint64(0)
+	if s.RouteKind == "guild_thread" {
+		if _, err := r.Identity(ctx); err != nil {
+			return err
+		}
+		if method == http.MethodPut {
+			extra = permissionAddReactions
+		}
 	}
-	if e = r.ValidateChannel(c, s); e != nil {
-		return e
+	c, err := r.Channel(ctx, s.ConversationID)
+	if err != nil {
+		return err
+	}
+	if s.RouteKind == "guild_thread" {
+		if r.routePermission != nil && !r.routePermission(s) {
+			return errors.New("preflight_route_permissions_missing")
+		}
+		if err = r.validateThreadRoute(ctx, c, s, extra); err != nil {
+			return err
+		}
+		ctx = r.threadWriteContext(ctx, s, extra)
+	} else if err = r.validateRoute(ctx, c, s); err != nil {
+		return err
 	}
 	var b []byte
 	if method == http.MethodPost {
 		b = []byte(`{}`)
 	}
-	resp, e := r.request(ctx, method, "/channels/"+s.ConversationID+suffix, b)
-	if e != nil {
+	resp, err := r.request(ctx, method, "/channels/"+s.ConversationID+suffix, b)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "preflight_") {
+			return err
+		}
 		return errors.New("feedback_transport_failed")
 	}
 	defer resp.Body.Close()
@@ -598,6 +644,7 @@ func (r *RESTClient) feedback(ctx context.Context, s Envelope, method, suffix st
 	}
 	return nil
 }
+
 func (r *RESTClient) Typing(ctx context.Context, s Envelope) error {
 	return r.feedback(ctx, s, http.MethodPost, "/typing")
 }
@@ -655,6 +702,11 @@ func (r *RESTClient) waitLimit(ctx context.Context, method, path string) error {
 	return r.waitLimitMeasured(ctx, method, path, nil)
 }
 func (r *RESTClient) waitLimitMeasured(ctx context.Context, method, path string, measurement *requestMeasurement) error {
+	_, err := r.waitLimitObserved(ctx, method, path, measurement)
+	return err
+}
+func (r *RESTClient) waitLimitObserved(ctx context.Context, method, path string, measurement *requestMeasurement) (bool, error) {
+	waited := false
 	route, _ := limitRoute(method, path)
 	for {
 		r.limitMu.Lock()
@@ -670,8 +722,9 @@ func (r *RESTClient) waitLimitMeasured(ctx context.Context, method, path string,
 		r.limitMu.Unlock()
 		wait := time.Until(until)
 		if wait <= 0 {
-			return nil
+			return waited, nil
 		}
+		waited = true
 		started := time.Now()
 		timer := time.NewTimer(wait)
 		var err error
@@ -683,7 +736,7 @@ func (r *RESTClient) waitLimitMeasured(ctx context.Context, method, path string,
 		}
 		measurement.update(func() { measurement.metrics.RateLimitWaitSeconds += time.Since(started).Seconds() })
 		if err != nil {
-			return err
+			return waited, err
 		}
 	}
 }

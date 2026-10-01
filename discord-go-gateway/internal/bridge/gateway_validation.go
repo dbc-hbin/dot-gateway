@@ -47,7 +47,7 @@ func validationLoop(ctx context.Context, store *Store, rest *RESTClient, hub *Wa
 }
 
 func processValidation(parent context.Context, store *Store, rest *RESTClient, g *gatewayState, in ValidationInput, epoch uint64) error {
-	if !store.policy.Accepts(in.Event) {
+	if !store.stages(in.Event) {
 		if err := store.DeferValidation(in.ID, "authorization_revoked", 0, true); err != nil {
 			return err
 		}
@@ -59,9 +59,10 @@ func processValidation(parent context.Context, store *Store, rest *RESTClient, g
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	channel, err := rest.Channel(ctx, in.Event.ConversationID)
+	verified := in.Event
 	failure := "route_lookup_failed"
 	if err == nil {
-		err = rest.ValidateChannel(channel, in.Event)
+		verified, err = rest.validateIngressRoute(ctx, channel, in.Event)
 		failure = "route_validation_failed"
 	}
 	if parent.Err() != nil {
@@ -72,13 +73,23 @@ func processValidation(parent context.Context, store *Store, rest *RESTClient, g
 		err = errors.New("validation_connection_changed")
 	}
 	if err == nil {
-		outcome, promoteErr := store.PromoteValidation(in)
+		var outcome string
+		var promoteErr error
+		if in.Event.RouteKind == "guild_thread_candidate" {
+			outcome, promoteErr = store.promoteThreadValidation(in, verified)
+		} else {
+			outcome, promoteErr = store.PromoteValidation(in)
+		}
 		if promoteErr == nil {
 			g.recordIngress(outcome)
 		}
 		return promoteErr
 	}
 	g.recordIngress(failure)
+	if in.Event.RouteKind == "guild_thread_candidate" && err.Error() == "preflight_channel_mismatch" {
+		g.recordIngress("rejected")
+		return store.rejectValidation(in.ID)
+	}
 	blocked := false
 	switch err.Error() {
 	case "preflight_http_401", "preflight_http_403", "preflight_http_404", "preflight_channel_mismatch", "preflight_recipient_mismatch", "invalid_channel_id":

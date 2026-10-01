@@ -258,6 +258,11 @@ CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 	return err
 }
 func (s *Store) Ingest(e Envelope) (string, error) {
+	// Even a caller supplying claimed thread metadata cannot bypass REST
+	// validation. All thread arrivals enter the same durable quarantine.
+	if e.RouteKind == "guild_thread" || e.RouteKind == "guild_thread_candidate" {
+		return s.StageIngress(e)
+	}
 	if !s.policy.Accepts(e) {
 		return "rejected", nil
 	}
@@ -714,7 +719,9 @@ func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement
 			if d.State == "sent" {
 				err = insertTiming(db, id, "end_to_end", now, now-created)
 			}
-			if err == nil { insertSendMeasurement(db, c, measurement) }
+			if err == nil {
+				insertSendMeasurement(db, c, measurement)
+			}
 			return nil, err
 		})
 	})
