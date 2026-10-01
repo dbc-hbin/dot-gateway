@@ -48,11 +48,13 @@ const (
 )
 
 func guildRoutePermissions(s *discordgo.Session, c Settings, e Envelope) bool {
-	if !guildPermissions(s, c) {
-		return false
-	}
-	if e.RouteKind == "dm" || c.Policy.GuildID == "" {
+	// Owner/recipient binding is enforced by Policy and REST ValidateChannel.
+	// An independent DM never requires access to the configured guild.
+	if e.RouteKind == "dm" {
 		return true
+	}
+	if c.Policy.GuildID == "" || !guildPermissions(s, c) {
+		return false
 	}
 	p, err := s.State.UserChannelPermissions(c.ExpectedBotID, c.Policy.GuildChannelID)
 	need := int64(discordgo.PermissionSendMessages)

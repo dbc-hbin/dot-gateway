@@ -1,0 +1,106 @@
+--- a/wsapi.go
++++ b/wsapi.go
+@@ -27,6 +27,11 @@
+ // ErrWSAlreadyOpen is thrown when you attempt to open
+ // a websocket that already is open.
+ var ErrWSAlreadyOpen = errors.New("web socket already opened")
++
++// ErrGatewayReconnect means the handshake requested another connection. Open
++// has closed its socket and released the session mutex before returning it.
++// Callers with SDK reconnect disabled can retry under their own deadline.
++var ErrGatewayReconnect = errors.New("gateway requested reconnect during handshake")
+ 
+ // ErrWSNotFound is thrown when you attempt to use a websocket
+ // that doesn't exist
+@@ -115,7 +120,7 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	e, err := s.onEvent(mt, m)
++	e, err := s.onEventWithOpenLock(mt, m, true)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -181,7 +186,7 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	e, err = s.onEvent(mt, m)
++	e, err = s.onEventWithOpenLock(mt, m, true)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -564,6 +569,13 @@
+ // If you use the AddHandler() function to register a handler for the
+ // "OnEvent" event then all events will be passed to that handler.
+ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
++	return s.onEventWithOpenLock(messageType, message, false)
++}
++
++// Open owns the session mutex while handling Hello and READY/RESUMED. Restart
++// opcodes must return to its deferred socket cleanup, not recursively lock via
++// CloseWithCode. Normal listener events retain the existing close/reconnect path.
++func (s *Session) onEventWithOpenLock(messageType int, message []byte, openLocked bool) (*Event, error) {
+ 
+ 	var err error
+ 	var reader io.Reader
+@@ -616,6 +628,9 @@
+ 	// Reconnect
+ 	// Must immediately disconnect from gateway and reconnect to new gateway.
+ 	if e.Operation == 7 {
++		if openLocked {
++			return e, ErrGatewayReconnect
++		}
+ 		s.log(LogInformational, "Closing and reconnecting in response to Op7")
+ 		s.CloseWithCode(websocket.CloseServiceRestart)
+ 		s.reconnect()
+@@ -625,22 +640,25 @@
+ 	// Invalid Session
+ 	// Must respond with a Identify packet.
+ 	if e.Operation == 9 {
+-		s.log(LogInformational, "Closing and reconnecting in response to Op9")
+-		s.CloseWithCode(websocket.CloseServiceRestart)
+-
+ 		var resumable bool
+ 		if err := json.Unmarshal(e.RawData, &resumable); err != nil {
+-			s.log(LogError, "error unmarshalling invalid session event, %s", err)
+ 			return e, err
+ 		}
+-
+ 		if !resumable {
+-			s.log(LogInformational, "Gateway session is not resumable, discarding its information")
++			if !openLocked {
++				s.Lock()
++			}
+ 			s.resumeGatewayURL = ""
+ 			s.sessionID = ""
+ 			atomic.StoreInt64(s.sequence, 0)
+-		}
+-
++			if !openLocked {
++				s.Unlock()
++			}
++		}
++		if openLocked {
++			return e, ErrGatewayReconnect
++		}
++		s.CloseWithCode(websocket.CloseServiceRestart)
+ 		s.reconnect()
+ 		return e, nil
+ 	}
+@@ -651,9 +669,13 @@
+ 	}
+ 
+ 	if e.Operation == 11 {
+-		s.Lock()
++		if !openLocked {
++			s.Lock()
++		}
+ 		s.LastHeartbeatAck = time.Now().UTC()
+-		s.Unlock()
++		if !openLocked {
++			s.Unlock()
++		}
+ 		s.log(LogDebug, "got heartbeat ACK")
+ 		return e, nil
+ 	}

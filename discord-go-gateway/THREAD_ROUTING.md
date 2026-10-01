@@ -35,9 +35,13 @@ bot's roles. It requires VIEW_CHANNEL, READ_MESSAGE_HISTORY and
 SEND_MESSAGES_IN_THREADS; ordinary SEND_MESSAGES does not substitute for the
 thread permission. Add-reaction also requires ADD_REACTIONS. Explicit
 Administrator handling avoids the older DiscordGo PermissionAll mask's omission
-of the thread-send bit. Gateway readiness accepts either valid parent-send or
+of the thread-send bit. Guild-route readiness accepts either valid parent-send or
 thread-send capability, then route-specific guards keep a thread-only bot from
-claiming or posting ordinary parent-channel work.
+claiming or posting ordinary parent-channel work. Owner DMs have an independent
+identity-ready gate: missing/unavailable guild state, revoked guild send rights,
+and a forbidden/deleted parent do not stop an otherwise valid owner DM. Guild
+traffic remains blocked until the exact parent is validated again. See
+[session resilience](SESSION_RESILIENCE.md).
 
 Missing/null required arrays or types, malformed permission bits, unknown assigned
 roles, incomplete thread metadata and mismatched bot identity fail closed. Active

@@ -2,11 +2,14 @@
 
 - Hermes reference: https://github.com/NousResearch/hermes-agent,
   commit `f42f579cf8bac4918ac9599bece71618afadd846`, MIT, copyright 2025 Nous Research.
-  The full reference tree is not included in this source-only recovery repository.
-  Its original MIT notice is preserved here and in `../third-party-notices/`.
-  This Go implementation ports only the narrow processing/feedback behavior and
-  does not import or execute the upstream Hermes runner.
-- DiscordGo `v0.29.0`: https://github.com/bwmarrin/discordgo, BSD-3-Clause
+  The original complete source is retained next door in
+  `hermes-dot-gateway/vendor/hermes-agent`; this Go implementation ports only the
+  narrow processing/feedback behavior and does not import or execute that tree.
+- DiscordGo `v0.29.1-0.20250705141350-98dc13349786`:
+  https://github.com/bwmarrin/discordgo, BSD-3-Clause. Upstream commit
+  `98dc1334978683bb0bec263fe809a70e3ec00e91`, with one reviewed Gateway handshake
+  patch in `third_party/discordgo/wsapi.go`. The original license, source hashes,
+  exact patch and maintenance rationale are retained in that directory.
 - Gorilla WebSocket `v1.5.3`: https://github.com/gorilla/websocket, BSD-2-Clause
 - modernc SQLite `v1.38.2`: https://gitlab.com/cznic/sqlite, BSD-3-Clause;
   embedded SQLite is public domain. Exact transitive versions/checksums are in

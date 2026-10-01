@@ -3,7 +3,7 @@ module dot-gateway
 go 1.24.0
 
 require (
-	github.com/bwmarrin/discordgo v0.29.0
+	github.com/bwmarrin/discordgo v0.29.1-0.20250705141350-98dc13349786
 	github.com/gorilla/websocket v1.5.3
 	modernc.org/sqlite v1.38.2
 )
@@ -21,3 +21,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// Narrow reviewed Gateway handshake patch; provenance in third_party/discordgo/PATCHES.md.
+replace github.com/bwmarrin/discordgo => ./third_party/discordgo

@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ type gatewayState struct {
 	epoch                     atomic.Uint64
 	mu                        sync.Mutex
 	state                     string
+	guildReady                bool
+	guildFailure              string
 	readyCount, disconnects   int
 	lastReady, lastDisconnect float64
 	ingressCounts             map[string]int
@@ -43,6 +46,7 @@ func (g *gatewayState) disconnect() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.ready.Store(false)
+	g.guildReady = false
 	g.epoch.Add(1)
 	g.state = "reconnecting"
 	g.disconnects++
@@ -54,10 +58,11 @@ func (g *gatewayState) publishReady(epoch uint64) bool {
 	if g.epoch.Load() != epoch {
 		return false
 	}
-	g.ready.Store(true)
+	if !g.ready.Swap(true) {
+		g.readyCount++
+		g.lastReady = wall()
+	}
 	g.state = "connected"
-	g.readyCount++
-	g.lastReady = wall()
 	return true
 }
 func wall() float64 { return float64(time.Now().UnixNano()) / 1e9 }
@@ -76,7 +81,10 @@ func (g *gatewayState) health(r *RESTClient) map[string]any {
 			warnings["owner_route_validation_failed"] = count
 		}
 	}
-	return map[string]any{"state": g.state, "transport": "go_discord_gateway", "ready_count": g.readyCount, "disconnects": g.disconnects, "last_ready_at": g.lastReady, "last_disconnect_at": g.lastDisconnect, "raw_sender": r.Diagnostics(), "ingress_counts": ingress, "warning_counts": warnings}
+	if g.guildFailure != "" {
+		warnings["configured_guild_unavailable"] = 1
+	}
+	return map[string]any{"guild_ready": g.guildReady, "guild_failure": g.guildFailure, "state": g.state, "transport": "go_discord_gateway", "ready_count": g.readyCount, "disconnects": g.disconnects, "last_ready_at": g.lastReady, "last_disconnect_at": g.lastDisconnect, "raw_sender": r.Diagnostics(), "ingress_counts": ingress, "warning_counts": warnings}
 }
 
 func persistGatewayHealth(store *Store, details map[string]any) error {
@@ -86,6 +94,10 @@ func persistGatewayHealth(store *Store, details map[string]any) error {
 func guildPermissions(s *discordgo.Session, c Settings) bool {
 	if c.Policy.GuildID == "" {
 		return true
+	}
+	guild, e := s.State.Guild(c.Policy.GuildID)
+	if e != nil || guild.Unavailable {
+		return false
 	}
 	ch, e := s.State.Channel(c.Policy.GuildChannelID)
 	if e != nil || ch.Type != discordgo.ChannelTypeGuildText || ch.GuildID != c.Policy.GuildID {
@@ -217,7 +229,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	s.MaxRestRetries = 0
 	s.SyncEvents = true
 	s.Client = rest.Client()
-	rest.routePermission = func(e Envelope) bool { return guildRoutePermissions(s, settings, e) }
+	rest.routePermission = func(e Envelope) bool { return gatewayRoutePermissions(g, s, settings, e) }
 	s.Identify.Intents = discordgo.IntentsDirectMessages
 	if settings.Policy.GuildID != "" {
 		s.Identify.Intents |= discordgo.IntentsGuilds | discordgo.IntentsGuildMessages
@@ -228,17 +240,18 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	dial := newGatewayDialer(ctx)
 	defer dial.closeConnections()
 	s.Dialer = &websocket.Dialer{Proxy: settings.ProxyConfig.ProxyRequest, HandshakeTimeout: 20 * time.Second, NetDialContext: dial.dial}
-	validate := make(chan struct{}, 1)
+	validate := make(chan uint64, 1)
 	requestValidation := func() {
-		select {
-		case validate <- struct{}{}:
-		default:
-		}
+		queueGatewayValidation(validate, g.epoch.Load())
 	}
 	incoming := make(chan *discordgo.Message, 1000)
 	s.AddHandler(func(_ *discordgo.Session, r *discordgo.Ready) {
 		if r.User == nil || r.User.ID != settings.ExpectedBotID || !r.User.Bot {
 			fail("bot_identity_mismatch")
+			return
+		}
+		if err := validateResumeGateway(settings.ProxyConfig, r.ResumeGatewayURL); err != nil {
+			fail("gateway_proxy_route_or_endpoint_invalid")
 			return
 		}
 		requestValidation()
@@ -274,41 +287,36 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	var wg sync.WaitGroup
 	start := func(fn func()) { wg.Add(1); go func() { defer wg.Done(); fn() }() }
 	start(func() {
+		// Guild route failures are independent of owner DM readiness. Periodic
+		// read-only revalidation also recovers a restored route without forcing
+		// a reconnect or replaying any message POST.
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
 		for {
+			var epoch uint64
 			select {
 			case <-ctx.Done():
 				return
-			case <-validate:
-				epoch := g.epoch.Load()
-				g.ready.Store(false)
-				if settings.Policy.GuildID != "" && !guildPermissions(s, settings) {
-					guild, ge := s.State.Guild(settings.Policy.GuildID)
-					_, ce := s.State.Channel(settings.Policy.GuildChannelID)
-					_, me := s.State.Member(settings.Policy.GuildID, settings.ExpectedBotID)
-					if ge == nil && !guild.Unavailable && ce == nil && me == nil {
-						fail("configured_channel_permissions_missing")
-						return
-					}
+			case epoch = <-validate:
+			case <-tick.C:
+				var ready bool
+				ready, epoch = g.readiness()
+				if !ready {
 					continue
-				} // Initial GUILD_CREATE follows READY.
-				check, c := context.WithTimeout(ctx, 20*time.Second)
-				_, err := rest.Identity(check)
-				if err == nil && settings.Policy.GuildID != "" {
-					var channel Channel
-					channel, err = rest.Channel(check, settings.Policy.GuildChannelID)
-					if err == nil {
-						err = rest.ValidateChannel(channel, Envelope{ConversationID: settings.Policy.GuildChannelID, RouteKind: "guild_text", GuildID: settings.Policy.GuildID})
-					}
-				}
-				c()
-				if err != nil {
-					fail(ClassifyGatewayError(err).Error())
-					return
-				}
-				if ctx.Err() == nil && g.publishReady(epoch) {
-					hub.Notify()
 				}
 			}
+			guildWasReady := g.guildReadiness()
+			if err := refreshGatewayReadiness(ctx, rest, s, settings, g, epoch); err != nil {
+				fail(ClassifyGatewayError(err).Error())
+				return
+			}
+			if !guildWasReady && g.guildReadiness() {
+				if err := store.ResumeValidation(); err != nil {
+					fail("gateway_validation_failed")
+					return
+				}
+			}
+			hub.Notify()
 		}
 	})
 	start(func() {
@@ -341,14 +349,14 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
 			return rest.SendGuardedMeasured(ctx, c, func() bool {
-				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && guildRoutePermissions(s, settings, c.Source)
+				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && gatewayRoutePermissions(g, s, settings, c.Source)
 			})
 		}); err != nil {
 			fail("dispatcher_failed")
 		}
 	})
 	start(func() {
-		if err := diagnosticLoop(ctx, store, rest, hub, g, func() bool { return guildRoutePermissions(s, settings, Envelope{RouteKind: "guild_text"}) }); err != nil {
+		if err := diagnosticLoop(ctx, store, rest, hub, g, func() bool { return gatewayRoutePermissions(g, s, settings, Envelope{RouteKind: "guild_text"}) }); err != nil {
 			fail("diagnostic_dispatch_failed")
 		}
 	})
@@ -556,15 +564,31 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 		defer stop()
 		return d.dial(dialCtx, network, address)
 	}
-	done := make(chan error, 1)
-	go func() { done <- s.Open() }()
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		d.closeConnections()
-		<-done
-		return ctx.Err()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		done := make(chan error, 1)
+		go func() { done <- s.Open() }()
+		select {
+		case err := <-done:
+			if !errors.Is(err, discordgo.ErrGatewayReconnect) {
+				return err
+			}
+			// Invalid-session retry jitter follows Discord's 1–5 second
+			// guidance. Every attempt shares the caller's original deadline.
+			timer := time.NewTimer(time.Duration(1+rand.IntN(5)) * time.Second)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
+		case <-ctx.Done():
+			d.closeConnections()
+			<-done // Patched handshake paths never re-lock Open's mutex.
+			return ctx.Err()
+		}
 	}
 }
 

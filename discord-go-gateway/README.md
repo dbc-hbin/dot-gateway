@@ -1,5 +1,3 @@
-> Source-only recovery edition. Live identity values are deliberately replaced by inert examples. See the repository-root RECOVERY.md before setup. Historical verification links may refer to records intentionally excluded from this repository.
-
 # Go Discord gateway
 
 A single compiled Linux binary replaces the Python gateway and queue CLI. The
@@ -82,10 +80,14 @@ and the unavoidable Discord final-GET-to-POST archive race.
   Validation backlog/age appears separately in status. A blocked conversation
   preserves its order without blocking other conversations' due validation work.
 - Reconnect has one 60-second deadline covering socket Open and validated
-  readiness. Incomplete state or a transient reconnect failure exits with a
-  transient code for the existing bounded process supervisor; permanent auth,
-  identity, route and permission codes remain permanent. Daemon recovery still
-  does not start or restart the assistant-side responder.
+  readiness. READY's securely validated resume URL is used with the original
+  session/sequence. Invalid-session handshake retries share that deadline and
+  never re-lock Open's session mutex. Owner DMs become identity-ready independently
+  of guild availability; exact guild routes retain a separate fail-closed gate
+  and 30-second read-only recovery checks. Authentication/identity failures remain
+  global. See [session resilience](SESSION_RESILIENCE.md) for the pinned SDK patch,
+  endpoint rules and offline coverage. Daemon recovery still does not start or
+  restart the assistant-side responder.
 
 ## Build and checks
 
@@ -93,8 +95,8 @@ Go 1.24 or later is required; verification used official Go 1.27.1. In this
 workspace `/usr/bin/go` is an unrelated executable: use the verified toolchain.
 
 ```sh
-export PATH=/opt/assistant-shared/go-toolchain/go1.27.1/bin:$PATH
-export GOPATH=/opt/assistant-shared/go-path GOCACHE=/opt/assistant-shared/go-cache
+export PATH=/workspace/shared/go-toolchain/go1.27.1/bin:$PATH
+export GOPATH=/workspace/shared/go-path GOCACHE=/workspace/shared/go-cache
 go test -race ./...
 go vet ./...
 CGO_ENABLED=0 go build -buildvcs=false -trimpath -o bin/dot-gateway ./cmd/dot-gateway
