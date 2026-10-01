@@ -166,6 +166,7 @@ func (s *Store) InvalidateSourceUpdate(channel, guild, id string) (bool, error) 
 	return v.(bool), nil
 }
 func revokeSourceClaimsDB(db *storeConn, e Envelope) error {
+	invalidateMemorySourceDB(db, e)
 	key := sourceLedgerKey(e)
 	for _, q := range []string{
 		`DELETE FROM consumer_claims WHERE inbound_id IN(SELECT id FROM inbound WHERE platform=? AND event_id=?)`,
@@ -315,6 +316,9 @@ func (s *Store) ApplySourceRefresh(in MessageSource, e Envelope) (string, error)
 					return nil, err
 				}
 				_, err := db.Exec(`UPDATE message_sources SET state='current',attempts=0,next_attempt=0,code=NULL WHERE platform=? AND event_id=?`, e.Platform, e.EventID)
+				if err == nil {
+					restoreMemorySourceDB(db, old)
+				}
 				return "unchanged", err
 			}
 			if s.stages(e) {

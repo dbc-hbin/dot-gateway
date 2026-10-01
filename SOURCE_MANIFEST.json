@@ -32,6 +32,11 @@
       "sha256": "62008e0850d3988e526c526a8bcff633ef9b842541d6bba5cf1d6836dd4b298a"
     },
     {
+      "path": "discord-go-gateway/.gitignore",
+      "bytes": 172,
+      "sha256": "28bde130031c56650e908d2906cd090fc97824c1d942d9d4a5276f5e03d693c4"
+    },
+    {
       "path": "discord-go-gateway/CLAIM_RECOVERY.md",
       "bytes": 2916,
       "sha256": "fd29a5f0dc11de064171d49e416fd78ae6648ac26088941acb4dc8a8360fcf06"
@@ -45,6 +50,11 @@
       "path": "discord-go-gateway/CONTROL_EVENTS.md",
       "bytes": 12801,
       "sha256": "1af9014bf86681b534e09eec75ac7467c6bcfd53e54e75c143be46764e7b0bec"
+    },
+    {
+      "path": "discord-go-gateway/CONVERSATION_MEMORY.md",
+      "bytes": 12617,
+      "sha256": "26cf8aafdaa0fc23e0a03a9067504ed2fd7c845a13847c6a8dc1fa3b5d9bb0a2"
     },
     {
       "path": "discord-go-gateway/LATENCY_IMPROVEMENTS.md",
@@ -68,8 +78,8 @@
     },
     {
       "path": "discord-go-gateway/README.md",
-      "bytes": 12536,
-      "sha256": "fc155007bb33ddffc11f7aaf3b82b3f7735ef81e8c597357a66a5a065f703512"
+      "bytes": 13094,
+      "sha256": "5f72466b5fb239baa5f5c60a2683c3524581587af0ffcad97eab5731ffe4ebfd"
     },
     {
       "path": "discord-go-gateway/RICH_OUTPUT.md",
@@ -98,8 +108,8 @@
     },
     {
       "path": "discord-go-gateway/bin/dot-bridge",
-      "bytes": 1076,
-      "sha256": "0677a52713f7811a23148150e94689c9e38e3280d4744f92dccea907b5c70ee0"
+      "bytes": 1170,
+      "sha256": "3202bcfa1920eb37895eb67780a6eb7c7cee487171ee8d6966dcc506bef81a94"
     },
     {
       "path": "discord-go-gateway/bin/dot-bridge-listen",
@@ -133,13 +143,18 @@
     },
     {
       "path": "discord-go-gateway/cmd/dot-gateway/main.go",
-      "bytes": 17531,
-      "sha256": "699b0bf1bc0080bb1844566f9eb213c3dcbd7f0672f890be8500e0cbec915e9e"
+      "bytes": 19524,
+      "sha256": "082736ee9eb2114f4cb7bc6408b05b8ef28d9408f49a1f069cd0e7c395854800"
     },
     {
       "path": "discord-go-gateway/cmd/dot-gateway/main_test.go",
       "bytes": 5702,
       "sha256": "6acd68e6e45ba79450d447b162eab5061dba8c3e64cacdaff77bfd44702bc01b"
+    },
+    {
+      "path": "discord-go-gateway/cmd/dot-gateway/memory_test.go",
+      "bytes": 1729,
+      "sha256": "97380fd93d3104b42bc87f1ff39a0c50e37d2d39a77fc03e4f4f4b6fa66b7c8e"
     },
     {
       "path": "discord-go-gateway/cmd/dot-gateway/next_fast_path_test.go",
@@ -298,8 +313,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/ingress_validation.go",
-      "bytes": 9877,
-      "sha256": "36b47aac6587a8a76599c6f7c39e4c28821abafaac572598f31eac5421615151"
+      "bytes": 9963,
+      "sha256": "6825351ad70df20c3a439fae5cfe80986c046428e60b86ddc4b9c8f0544beb80"
     },
     {
       "path": "discord-go-gateway/internal/bridge/ingress_validation_test.go",
@@ -362,6 +377,41 @@
       "sha256": "7fb83da90889200d3e0c80220d641d819df149c4e9d74e659cf78052ffa95e3c"
     },
     {
+      "path": "discord-go-gateway/internal/bridge/memory.go",
+      "bytes": 27312,
+      "sha256": "29f2e0fd53df51cf116aebcbab32024b1d03de9897dd76d621fb7b63657fad87"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_backup.go",
+      "bytes": 24024,
+      "sha256": "25705ded048901af13e0b533c3f7620dfcac03aa0ba0fc4f56dbab9464e9ab55"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_bench_test.go",
+      "bytes": 3160,
+      "sha256": "f3fd73e0e2c3fe7705145ce9b4cdf6998bc817a9b00058689176355a94a666da"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_maintenance.go",
+      "bytes": 5803,
+      "sha256": "383a94ab3a164356130a5a0e1f8b63454d26a966566d0479d4d2d3c8f4ef5c38"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_phase3_test.go",
+      "bytes": 5837,
+      "sha256": "50facaff345ebe740ab0c82140952f7a09842537beb416f481784250948f7e56"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_recovery_test.go",
+      "bytes": 11153,
+      "sha256": "9a226245c5c668abd4cc42d6c1bd6a7b49019290aeafefe22847007168e5d61d"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/memory_test.go",
+      "bytes": 20553,
+      "sha256": "1f2d41dd08376bf952da68a067a0f6a262cc5658ca2393ffc70d90d9a015e1e6"
+    },
+    {
       "path": "discord-go-gateway/internal/bridge/message_context.go",
       "bytes": 6846,
       "sha256": "2e1e0301d582d318efb6179b6d607919d9a0faa7afe120622b8a144e8e542850"
@@ -373,8 +423,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/message_sources.go",
-      "bytes": 24961,
-      "sha256": "6c2cc77d889844c85e9464bf4b7e0b296057fa9515f9b5675841948f46567d56"
+      "bytes": 25056,
+      "sha256": "bdf1eb49ef8923d34ea21c50289b3021a51fce56a1a3bacaf429cee4d09b2686"
     },
     {
       "path": "discord-go-gateway/internal/bridge/message_sources_test.go",
@@ -418,8 +468,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/reply_receipts.go",
-      "bytes": 8418,
-      "sha256": "fd21491c36a8c3b082f2edae27ad43a909e31ccc4b91c2650213a44ae32a80bb"
+      "bytes": 8502,
+      "sha256": "01d60feb29fce423a782321af9a74c42e6351975d80059e665917c97ee0123d7"
     },
     {
       "path": "discord-go-gateway/internal/bridge/reply_spool.go",
@@ -478,8 +528,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/store.go",
-      "bytes": 43206,
-      "sha256": "de225bd7b528ed24028c9ee178e42ede97e6ea6330b998d8ad465d14a81b2a75"
+      "bytes": 43603,
+      "sha256": "ae5aead5a619eb46ca79768472d31388ceed0536d148ec81b34d166edac79dae"
     },
     {
       "path": "discord-go-gateway/internal/bridge/store_test.go",
@@ -1528,8 +1578,8 @@
     },
     {
       "path": "recovery/README.ko.md",
-      "bytes": 20079,
-      "sha256": "05b6c2e453f3ea66589cee96ab48adb34b12e24c9774b574a35872f058d6ad71"
+      "bytes": 21165,
+      "sha256": "2d0b6e9eff1acfa7d94c8776a16567a0a0a975e13cad8f411376a30234378c0a"
     },
     {
       "path": "recovery/TOOLCHAIN.lock.json",
@@ -1577,6 +1627,11 @@
       "sha256": "a9044250f18f301142ddecf2b65396f6af1ac46fd82442699a42a6fe693491cd"
     },
     {
+      "path": "recovery/memory_test.go",
+      "bytes": 2420,
+      "sha256": "90a61223113081f0361183c1cd207fa005e484541037814b6643a50ae8ab1540"
+    },
+    {
       "path": "recovery/operations.go",
       "bytes": 17169,
       "sha256": "f934f64ffd18dedfaf02be3a8654750aadf338265ecefa2f3b1346c75bd2d0ad"
@@ -1598,8 +1653,8 @@
     },
     {
       "path": "recovery/state.go",
-      "bytes": 19666,
-      "sha256": "b12f999e45500dde6f06461f2b3271286674a4c0a5691a12aaa2e2151442b527"
+      "bytes": 27321,
+      "sha256": "40888b982508f0013bf182bbd917c4c36e0713ded185a4baa7725bf7a49d2775"
     },
     {
       "path": "recovery/templates/ACTIVATION.example.json",

@@ -89,6 +89,13 @@ func run(args []string) int {
 	allowed["materialize"] = "claim attachment"
 	allowed["register-commands"] = "dry-run snapshot-file fetch apply-reviewed plan-file"
 	allowed["bind-response"] = "claim message-id"
+	allowed["memory-search"] = "claim query"
+	allowed["memory-put"] = "claim json-file"
+	allowed["memory-get"] = "claim key"
+	allowed["memory-forget"] = "claim document revision"
+	allowed["memory-backfill"] = "limit"
+	allowed["memory-export"] = ""
+	allowed["memory-import"] = "sha256"
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
 	spec, ok := allowed[cmd]
@@ -106,7 +113,7 @@ func run(args []string) int {
 	switch cmd {
 	case "recover-thread-message":
 		expected = 2
-	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply":
+	case "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply", "memory-search", "memory-put", "memory-get", "memory-forget", "memory-export", "memory-import":
 		expected = 1
 	}
 	if len(pos) != expected {
@@ -180,13 +187,63 @@ func run(args []string) int {
 		return d, nil
 	}
 	claim := f["claim"]
-	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response") && claim == "" {
+	if (cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response" || cmd == "memory-search" || cmd == "memory-put" || cmd == "memory-get" || cmd == "memory-forget") && claim == "" {
 		output(map[string]string{"error": "claim_required"})
 		return 2
 	}
 	var result any
 	mutated := false
 	switch cmd {
+	case "memory-export":
+		result, e = store.ExportMemory(pos[0])
+	case "memory-import":
+		result, e = store.ImportMemory(pos[0], f["sha256"])
+	case "memory-search":
+		result, e = store.RecallMemory(pos[0], claim, f["query"])
+	case "memory-get":
+		result, e = store.MemoryFactState(pos[0], claim, f["key"])
+	case "memory-forget":
+		var revision int64
+		revision, e = strconv.ParseInt(f["revision"], 10, 64)
+		if e == nil && revision >= 0 {
+			e = store.ForgetMemory(pos[0], claim, bridge.MemoryRef{DocumentID: f["document"], SourceRevision: revision})
+		} else {
+			e = errors.New("invalid_memory_revision")
+		}
+		result = map[string]bool{"forgotten": e == nil}
+	case "memory-backfill":
+		var limit int
+		limit, e = integer("limit", 50)
+		if e == nil {
+			result, e = store.BackfillMemory(limit)
+		}
+	case "memory-put":
+		var file *os.File
+		file, e = os.Open(f["json-file"])
+		if e != nil {
+			e = errors.New("memory_read_failed")
+			break
+		}
+		var data []byte
+		data, e = io.ReadAll(io.LimitReader(file, 16385))
+		file.Close()
+		if e != nil || len(data) > 16384 {
+			e = errors.New("memory_read_failed")
+			break
+		}
+		var mutation bridge.MemoryMutation
+		decoder := json.NewDecoder(strings.NewReader(string(data)))
+		decoder.DisallowUnknownFields()
+		if e = decoder.Decode(&mutation); e != nil {
+			e = errors.New("invalid_memory_json")
+			break
+		}
+		var extra any
+		if decoder.Decode(&extra) != io.EOF {
+			e = errors.New("invalid_memory_json")
+			break
+		}
+		result, e = store.PutMemory(pos[0], claim, mutation)
 	case "materialize":
 		if !bridge.Snowflake(f["attachment"]) {
 			e = errors.New("attachment_required")

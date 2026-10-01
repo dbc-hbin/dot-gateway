@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -98,18 +99,33 @@ type Operation struct {
 	GuildMode        string `json:"guild_mode"`
 	MessageContent   bool   `json:"message_content_approved"`
 }
+type MemorySourceFence struct {
+	Scope    string `json:"scope,omitempty"`
+	Platform string `json:"platform"`
+	EventID  string `json:"event_id"`
+	Revision int64  `json:"revision"`
+	State    string `json:"state"`
+}
+type MemoryDocumentFence struct {
+	DocumentID string `json:"document_id"`
+	Version    int64  `json:"version"`
+	Forgotten  bool   `json:"forgotten"`
+}
 type Snapshot struct {
-	Schema      int          `json:"schema"`
-	Created     string       `json:"created_at"`
-	ManifestSHA string       `json:"source_manifest_sha256"`
-	Operation   Operation    `json:"operation"`
-	Events      []Event      `json:"events"`
-	Ingress     []Event      `json:"ingress"`
-	Replies     []Reply      `json:"replies"`
-	Chunks      []Chunk      `json:"chunks"`
-	Diagnostics []Diagnostic `json:"diagnostics"`
-	TestSends   []TestSend   `json:"test_sends"`
-	Reports     []Receipt    `json:"reports"`
+	MemorySources  []MemorySourceFence   `json:"memory_sources,omitempty"`
+	MemoryFences   []MemoryDocumentFence `json:"memory_fences,omitempty"`
+	MemoryLedgerID string                `json:"memory_ledger_id,omitempty"`
+	Schema         int                   `json:"schema"`
+	Created        string                `json:"created_at"`
+	ManifestSHA    string                `json:"source_manifest_sha256"`
+	Operation      Operation             `json:"operation"`
+	Events         []Event               `json:"events"`
+	Ingress        []Event               `json:"ingress"`
+	Replies        []Reply               `json:"replies"`
+	Chunks         []Chunk               `json:"chunks"`
+	Diagnostics    []Diagnostic          `json:"diagnostics"`
+	TestSends      []TestSend            `json:"test_sends"`
+	Reports        []Receipt             `json:"reports"`
 }
 
 var ident = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -273,6 +289,100 @@ func snapshotDB(p string, s *Snapshot) error {
 	}); e != nil {
 		return e
 	}
+	var hasMemory int
+	if e = tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_meta'").Scan(&hasMemory); e != nil {
+		return e
+	}
+	if hasMemory != 0 {
+		e = tx.QueryRow("SELECT value FROM memory_meta WHERE key='ledger_identity'").Scan(&s.MemoryLedgerID)
+		if e != nil && e != sql.ErrNoRows {
+			return e
+		}
+		if s.MemoryLedgerID != "" && !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(s.MemoryLedgerID) {
+			return errors.New("invalid memory ledger identity")
+		}
+	}
+	if s.MemoryLedgerID != "" {
+		if e = query("SELECT ms.platform,ms.event_id,ms.revision,CASE WHEN EXISTS(SELECT 1 FROM inbound i WHERE i.platform=ms.platform AND i.event_id=CASE WHEN ms.revision=0 THEN ms.event_id ELSE ms.event_id||':revision:'||ms.revision END AND i.state='cancelled') THEN 'rejected' ELSE ms.state END,COALESCE((SELECT d.scope FROM memory_documents d WHERE d.platform=ms.platform AND d.event_id=ms.event_id AND d.source_revision=ms.revision AND d.role='user' ORDER BY d.id DESC LIMIT 1),'') FROM message_sources ms ORDER BY ms.platform,ms.event_id", func(r *sql.Rows) error {
+			var v MemorySourceFence
+			if e := r.Scan(&v.Platform, &v.EventID, &v.Revision, &v.State, &v.Scope); e != nil {
+				return e
+			}
+			s.MemorySources = append(s.MemorySources, v)
+			return nil
+		}); e != nil {
+			return e
+		}
+		if e = query("SELECT d.record_key,COALESCE(f.version,0),d.active=0 OR d.body='' FROM memory_documents d LEFT JOIN memory_facts f ON f.doc_id=d.id WHERE d.active=0 OR d.body='' OR f.doc_id IS NOT NULL ORDER BY d.id", func(r *sql.Rows) error {
+			var v MemoryDocumentFence
+			if e := r.Scan(&v.DocumentID, &v.Version, &v.Forgotten); e != nil {
+				return e
+			}
+			s.MemoryFences = append(s.MemoryFences, v)
+			return nil
+		}); e != nil {
+			return e
+		}
+	}
+
+	if s.MemoryLedgerID != "" {
+		sources := map[string]MemorySourceFence{}
+		for _, f := range s.MemorySources {
+			sources[f.Platform+":"+f.EventID] = f
+		}
+		documents := map[string]MemoryDocumentFence{}
+		for _, f := range s.MemoryFences {
+			documents[f.DocumentID] = f
+		}
+		var oldSources, oldDocuments int
+		if e = tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_source_fences'").Scan(&oldSources); e != nil {
+			return e
+		}
+		if e = tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_restore_fences'").Scan(&oldDocuments); e != nil {
+			return e
+		}
+		if oldSources != 0 {
+			if e = query("SELECT platform,event_id,revision,state,scope FROM memory_source_fences", func(r *sql.Rows) error {
+				var f MemorySourceFence
+				if e := r.Scan(&f.Platform, &f.EventID, &f.Revision, &f.State, &f.Scope); e != nil {
+					return e
+				}
+				key := f.Platform + ":" + f.EventID
+				current, ok := sources[key]
+				if !ok || f.State == "deleted" || f.Revision > current.Revision || (f.Revision == current.Revision && f.State != "current") {
+					sources[key] = f
+				}
+				return nil
+			}); e != nil {
+				return e
+			}
+		}
+		if oldDocuments != 0 {
+			if e = query("SELECT record_key,version,forgotten FROM memory_restore_fences", func(r *sql.Rows) error {
+				var f MemoryDocumentFence
+				if e := r.Scan(&f.DocumentID, &f.Version, &f.Forgotten); e != nil {
+					return e
+				}
+				current, ok := documents[f.DocumentID]
+				if !ok || f.Version > current.Version || (f.Version == current.Version && f.Forgotten) {
+					documents[f.DocumentID] = f
+				}
+				return nil
+			}); e != nil {
+				return e
+			}
+		}
+		s.MemorySources = nil
+		for _, f := range sources {
+			s.MemorySources = append(s.MemorySources, f)
+		}
+		sort.Slice(s.MemorySources, func(i, j int) bool { return s.MemorySources[i].EventID < s.MemorySources[j].EventID })
+		s.MemoryFences = nil
+		for _, f := range documents {
+			s.MemoryFences = append(s.MemoryFences, f)
+		}
+		sort.Slice(s.MemoryFences, func(i, j int) bool { return s.MemoryFences[i].DocumentID < s.MemoryFences[j].DocumentID })
+	}
 	return tx.Commit()
 }
 func snapshotReports(dir string, s *Snapshot) error {
@@ -318,14 +428,53 @@ func snapshotReports(dir string, s *Snapshot) error {
 	}
 	return nil
 }
+func sourceEventID(s string) bool {
+	if snowflakeID(s) {
+		return true
+	}
+	base, revision, ok := strings.Cut(s, ":revision:")
+	if !ok || !snowflakeID(base) || revision == "" || revision[0] == '0' {
+		return false
+	}
+	n, err := strconv.ParseInt(revision, 10, 64)
+	return err == nil && n > 0 && strconv.FormatInt(n, 10) == revision
+}
+func transportEventID(s string) bool {
+	if sourceEventID(s) {
+		return true
+	}
+	id, ok := strings.CutPrefix(s, "control:")
+	return ok && (snowflakeID(id) || regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id))
+}
 func validateSnapshot(s Snapshot) error {
+	if s.MemoryLedgerID == "" && (len(s.MemorySources) > 0 || len(s.MemoryFences) > 0) {
+		return errors.New("memory fences require ledger identity")
+	}
+	seenSources, seenDocuments := map[string]bool{}, map[string]bool{}
+	for _, v := range s.MemorySources {
+		key := v.Platform + ":" + v.EventID
+		if v.Platform != "discord" || !snowflakeID(v.EventID) || v.Revision < 0 || (v.Scope != "" && !hashPattern.MatchString(v.Scope)) || seenSources[key] || (v.State != "current" && v.State != "refresh" && v.State != "deleted" && v.State != "rejected") {
+			return errors.New("invalid memory source fence")
+		}
+		seenSources[key] = true
+	}
+	for _, v := range s.MemoryFences {
+		if !regexp.MustCompile(`^(user:[A-Za-z0-9_-]{1,128}|assistant:[A-Za-z0-9_-]{1,128}:[0-9]{1,10}|fact:[0-9a-f]{64}:[a-z0-9][a-z0-9_.-]{0,79})$`).MatchString(v.DocumentID) || v.Version < 0 || seenDocuments[v.DocumentID] || (strings.HasPrefix(v.DocumentID, "fact:") && v.Version == 0) {
+			return errors.New("invalid memory document fence")
+		}
+		seenDocuments[v.DocumentID] = true
+	}
+
+	if s.MemoryLedgerID != "" && !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(s.MemoryLedgerID) {
+		return errors.New("invalid memory ledger identity")
+	}
 	if s.Schema != 1 || !stampOK(s.Created) || !hashPattern.MatchString(s.ManifestSHA) || !operationOK(s.Operation) {
 		return errors.New("invalid snapshot header or operation")
 	}
 	ids, events, replies, chunks := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, v := range append(append([]Event{}, s.Events...), s.Ingress...) {
 		key := v.Platform + "/" + v.EventID
-		if !validID(v.ID) || v.Platform != "discord" || !snowflakeID(v.EventID) || !validID(v.State) || !finitePositive(v.Created) || ids[v.ID] || events[key] {
+		if !validID(v.ID) || v.Platform != "discord" || !transportEventID(v.EventID) || !validID(v.State) || !finitePositive(v.Created) || ids[v.ID] || events[key] {
 			return errors.New("invalid or duplicate event")
 		}
 		ids[v.ID] = true
@@ -473,6 +622,29 @@ func restoreState(s Snapshot, dest string, failAfter int) error {
 		for _, v := range s.TestSends {
 			if _, e = tx.Exec("INSERT INTO test_sends(bot_id,guild_id,channel_id,owner_id,nonce,content,state,attempted,message_id,code,created,updated) VALUES(?,?,?,?,?,'','uncertain',1,?,'recovery_history_no_replay',?,?)", v.BotID, v.GuildID, v.ChannelID, v.OwnerID, v.Nonce, v.MessageID, v.Created, v.Updated); e != nil {
 				return e
+			}
+		}
+		if s.MemoryLedgerID != "" {
+			if _, e = tx.Exec("CREATE TABLE memory_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)"); e != nil {
+				return e
+			}
+			if _, e = tx.Exec("CREATE TABLE memory_source_fences(platform TEXT NOT NULL,event_id TEXT NOT NULL,revision INTEGER NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,PRIMARY KEY(platform,event_id)); CREATE TABLE memory_restore_fences(record_key TEXT PRIMARY KEY,version INTEGER NOT NULL,forgotten INTEGER NOT NULL)"); e != nil {
+				return e
+			}
+			for _, f := range s.MemorySources {
+				if _, e = tx.Exec("INSERT INTO memory_source_fences VALUES(?,?,?,?,?)", f.Platform, f.EventID, f.Revision, f.State, f.Scope); e != nil {
+					return e
+				}
+			}
+			for _, f := range s.MemoryFences {
+				if _, e = tx.Exec("INSERT INTO memory_restore_fences VALUES(?,?,?)", f.DocumentID, f.Version, f.Forgotten); e != nil {
+					return e
+				}
+			}
+			for key, value := range map[string]string{"ledger_identity": s.MemoryLedgerID, "restored_metadata_only": "1", "restored_owner_id": s.Operation.OwnerID, "restored_guild_id": s.Operation.GuildID, "restored_channel_id": s.Operation.GatewayChannelID} {
+				if _, e = tx.Exec("INSERT INTO memory_meta(key,value) VALUES(?,?)", key, value); e != nil {
+					return e
+				}
 			}
 		}
 		if e = tx.Commit(); e != nil {

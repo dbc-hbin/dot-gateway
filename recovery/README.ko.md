@@ -193,3 +193,18 @@ dot-recovery restore-operations \
 복원된 수집기 root는 state.json, reviewed-offers.json, first-auto-notification.json, schedule.json, RUNBOOK.md와 메인 스냅샷에 연결된 outbox/target.json·run 영수증을 함께 가집니다. 새 빈 outbox를 만들지 않습니다. 완료 영수증은 그대로, 미확정 영수증은 uncertain으로 보존합니다. RECOVERY_BLOCK.json도 항상 생성합니다.
 
 재가동 전에 기존 자동화가 이 새 root를 사용하도록 승인된 환경 설정을 검토해야 합니다. RUNBOOK의 과거 절대 경로는 자동 변경되지 않습니다. 이미 보낸 혜택은 reviewed-offers와 outbox를 모두 확인하고, first-auto-notification의 기존 수락 기록을 지우거나 다시 보내지 않습니다. 이 명령은 스케줄러 API나 ChatGPT/Discord에 접근하지 않습니다. 최신 이력 대조·기존 sender 중지·별도 활성화 승인은 여전히 필요합니다.
+
+## 비공개 대화 메모리 연결
+
+새 gateway의 `CONVERSATION_MEMORY.md`를 함께 따릅니다. 메인 metadata 스냅샷은
+대화 본문 없이 메모리 ledger ID, source revision/state/정확한 scope hash,
+forget 표식과 fact version만 보존합니다. 실제 redacted 메모리는 별도 0600
+`memory-export` 아카이브와 독립적으로 기록한 SHA-256으로 비공개 보관합니다.
+둘은 같은 일관된 SQLite 스냅샷에서 생성합니다.
+
+`restore-state`는 메모리 경계값을 inert fence 테이블에만 복원합니다. 별도
+`memory-import --sha256`는 기존 source head/claim/전송 작업을 재생성하지 않고,
+같은 소유자·대화 scope의 `restored_unverified_history`로만 복원합니다. 더 최신
+metadata의 삭제/forget/버전 표식은 이전 메모리 아카이브보다 우선합니다. 복원 후
+다시 백업해도 이 표식은 유지됩니다. 양쪽 백업 모두 삭제 이전이라면 나중의 삭제를
+알아낼 수 없습니다. 기존 memory metadata가 없는 스냅샷 형식도 계속 지원합니다.

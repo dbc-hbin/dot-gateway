@@ -245,6 +245,7 @@ func (s *Store) promoteValidation(in ValidationInput, verified *Envelope) (strin
 				if _, err := db.Exec(`INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)`, in.ID, event.Platform, sourceLedgerKey(event), raw, created); err != nil {
 					return nil, err
 				}
+				memoryBestEffort(db, func() error { return rememberInboundDB(db, in.ID, event) })
 				if err := insertTiming(db, in.ID, "ingested", epoch(), epoch()-created); err != nil {
 					return nil, err
 				}

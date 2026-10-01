@@ -1,0 +1,9 @@
+# Private derived memory must never enter a source commit or public source ZIP.
+*.memory.jsonl
+*.memory.jsonl.*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+.memory-private/

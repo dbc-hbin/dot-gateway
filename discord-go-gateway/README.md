@@ -213,3 +213,14 @@ message or a whitespace run that cannot be divided into nonblank messages is
 rejected explicitly. This is a conservative boundary parser, not full Unicode
 or Markdown segmentation. Long code fences remain verbatim and can render across
 Discord messages without a closing/reopening fence; no synthetic text is added.
+
+## Private conversation memory
+
+
+Claims now include bounded, exact-conversation historical recall. Owner text and
+actually sent reply chunks are indexed incrementally in the existing private
+SQLite ledger, with Korean bigram lookup and optional claim/source-bound curated
+facts. Recalled material never supplies authorization. See
+[conversation memory](CONVERSATION_MEMORY.md) for privacy boundaries, optional
+single-call note/reply workflow, explicit legacy backfill and sanitized private
+backup/restore. Memory archives are never public source artifacts.

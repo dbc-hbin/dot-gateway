@@ -221,6 +221,7 @@ func (r *RESTClient) ReconcileReply(ctx context.Context, store *Store, replyID s
 			if err := changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified_output' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, replyID, index)); err != nil {
 				return nil, err
 			}
+			memoryBestEffort(db, func() error { return rememberSentDB(db, replyID, index) })
 			if err := cancelStaleReplyAfterResultDB(db, c); err != nil {
 				return nil, err
 			}

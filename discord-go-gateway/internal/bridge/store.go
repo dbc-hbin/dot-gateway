@@ -21,11 +21,12 @@ var ErrStoreClosed = errors.New("store closed")
 var ErrClaim = errors.New("claim expired or is not owned by this consumer")
 
 type Claim struct {
-	InboundID  string   `json:"inbound_id"`
-	Claim      string   `json:"claim"`
-	LeaseUntil float64  `json:"lease_until"`
-	Trust      string   `json:"trust"`
-	Envelope   Envelope `json:"envelope"`
+	InboundID  string        `json:"inbound_id"`
+	Claim      string        `json:"claim"`
+	LeaseUntil float64       `json:"lease_until"`
+	Trust      string        `json:"trust"`
+	Envelope   Envelope      `json:"envelope"`
+	Memory     *MemoryRecall `json:"memory,omitempty"`
 }
 type DeliveryChunk struct {
 	OutputReceipt ReplyOutputReceipt `json:"output_receipt,omitempty"`
@@ -84,6 +85,7 @@ type StorePolicy interface {
 	Accepts(Envelope) bool
 }
 type Store struct {
+	path          string
 	replyStateDir string
 	policy        StorePolicy
 	requests      chan storeRequest
@@ -147,7 +149,7 @@ func OpenStore(path string, policy StorePolicy) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{replyStateDir: ReplyStateDir(p), policy: policy, requests: make(chan storeRequest), done: make(chan struct{})}
+	s := &Store{path: p, replyStateDir: ReplyStateDir(p), policy: policy, requests: make(chan storeRequest), done: make(chan struct{})}
 	ready := make(chan error, 1)
 	go s.run(p, ready)
 	if err = <-ready; err != nil {
@@ -262,6 +264,7 @@ CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 		if err = initMessageSources(db); err != nil {
 			return nil, err
 		}
+		memoryBestEffort(db, func() error { return initMemory(db) })
 		if had == 0 {
 			_, err = db.Exec(`INSERT OR IGNORE INTO feedback SELECT i.id,'history' FROM inbound i WHERE i.state IN ('ignored','blocked') OR (i.state='replied' AND NOT EXISTS(SELECT 1 FROM chunks c JOIN replies r ON r.id=c.reply_id WHERE r.inbound_id=i.id AND c.state IN ('pending','sending')))`)
 		}
@@ -314,6 +317,7 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 			}
 			_, err = db.Exec("INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)", id, e.Platform, sourceLedgerKey(e), string(raw), epoch())
 			if err == nil {
+				memoryBestEffort(db, func() error { return rememberInboundDB(db, id, e) })
 				err = insertTiming(db, id, "ingested", epoch(), 0)
 			}
 			return "accepted", err
@@ -432,7 +436,7 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 				}
 				if len(owned) == 1 && ownedCurrent && s.policy.Accepts(owned[0].event) {
 					r := owned[0]
-					return &Claim{r.id, r.claim, r.lease, "untrusted_message_text", r.event}, nil
+					return claimWithMemoryDB(db, r.id, r.claim, r.lease, r.event), nil
 				}
 				if len(owned) == 1 {
 					// Apply the ordinary acquisition policy gate to replay too, and
@@ -504,7 +508,7 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					if err = insertTiming(db, r.id, "claimed", now, now-r.created); err != nil {
 						return nil, err
 					}
-					return &Claim{r.id, cl, until, "untrusted_message_text", r.event}, nil
+					return claimWithMemoryDB(db, r.id, cl, until, r.event), nil
 				}
 				// Advance by immutable ordering keys, not OFFSET: revoked candidates
 				// may have been removed from the eligible set while scanning this page.
@@ -793,6 +797,7 @@ func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement
 				}
 				return nil, err
 			}
+			memoryBestEffort(db, func() error { return rememberSentDB(db, c.ReplyID, c.Index) })
 			if err = restoreCurrentSourceResultDB(db, c, r); err != nil {
 				return nil, err
 			}
@@ -945,6 +950,7 @@ func (s *Store) ResolveSent(id string, index int, messageID string) error {
 						return nil, errors.New("invalid source envelope")
 					}
 					err = cancelStaleReplyAfterResultDB(db, Chunk{ReplyID: id, Index: index, Source: e})
+					memoryBestEffort(db, func() error { return rememberSentDB(db, id, index) })
 				}
 			}
 			return nil, err
