@@ -69,6 +69,11 @@ func run() error {
 		dry := fs.Bool("dry-run", false, "do not save state; live reads still occur unless --fixture is set")
 		timeout := fs.Duration("timeout", 20*time.Minute, "total scan deadline")
 		opTimeout := fs.Duration("operation-timeout", 5*time.Minute, "deadline for each native fetch operation")
+		profile := fs.String("profile", "wide", "collection profile: wide review queue or legacy parity")
+		maxRows := fs.Int("max-scan-per-source", 0, "listing rows per source (1..200; 0 uses profile default)")
+		maxPerSource := fs.Int("max-per-source", 0, "detail reads per source (1..24; 0 uses profile default)")
+		maxTotal := fs.Int("max-total", 0, "total detail reads/candidates (1..96; 0 uses profile default)")
+		maxPages := fs.Int("max-listing-pages", 0, "supported public listing pages per source (1..5; 0 uses profile default)")
 		if e := fs.Parse(os.Args[2:]); e != nil {
 			return e
 		}
@@ -78,9 +83,29 @@ func run() error {
 		if *timeout <= 0 || *opTimeout <= 0 {
 			return errors.New("timeouts must be positive")
 		}
+		options, e := collector.OptionsForProfile(*profile)
+		if e != nil {
+			return e
+		}
+		for _, override := range []struct {
+			value  int
+			target *int
+		}{
+			{*maxRows, &options.MaxScanPerSource}, {*maxPerSource, &options.MaxPerSource},
+			{*maxTotal, &options.MaxTotal}, {*maxPages, &options.MaxListingPages},
+		} {
+			if override.value != 0 {
+				*override.target = override.value
+			}
+		}
+		if e = options.Validate(); e != nil {
+			return e
+		}
 		ctx, stop := context.WithTimeout(ctx, *timeout)
 		defer stop()
-		var backend collector.Backend = collector.NewNativeBackend(nativeFetcher(root, !*dry), *opTimeout)
+		native := collector.NewNativeBackend(nativeFetcher(root, !*dry), *opTimeout)
+		native.Options = options
+		var backend collector.Backend = native
 		if *fixture != "" {
 			b, e := os.ReadFile(*fixture)
 			if e != nil {
@@ -105,7 +130,7 @@ func run() error {
 		if e != nil {
 			return e
 		}
-		report, e := collector.Scan(ctx, backend, state)
+		report, e := collector.ScanWithOptions(ctx, backend, state, options)
 		if e != nil {
 			return e
 		}

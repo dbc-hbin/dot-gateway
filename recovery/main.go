@@ -13,7 +13,7 @@ import (
 
 func execute(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: dot-recovery verify-source|pack-source|restore-source|snapshot|verify-state|restore-state|health; mutations require --apply")
+		return errors.New("usage: dot-recovery verify-source|pack-source|restore-source|configure-source|snapshot|verify-state|restore-state|snapshot-operations|verify-operations|restore-operations|activation-env|health; mutations require --apply")
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	source := f.String("source", "", "reviewed source directory")
@@ -22,6 +22,9 @@ func execute(args []string) error {
 	snap := f.String("snapshot", "", "private snapshot file")
 	sp := f.String("snapshot-sha", "", "trusted snapshot SHA-256")
 	output := f.String("output", "", "new absolute output file")
+	operationRoot := f.String("operations-root", "", "private committed collector/reporting operation directory")
+	operationsFile := f.String("operations", "", "private operations snapshot")
+	operationsSHA := f.String("operations-sha", "", "trusted operations snapshot SHA-256")
 	component := f.String("component", "", "gateway or headed for activation environment")
 	stateRoot := f.String("state-root", "", "new restored private state root for generated path references")
 	dest := f.String("new-root", "", "new absolute destination root; never existing")
@@ -93,6 +96,53 @@ func execute(args []string) error {
 			result["applied"] = true
 		}
 		result["private_derived_source"] = true
+	case "snapshot-operations":
+		main, e := readSnapshot(*snap, *sp, *pin)
+		if e != nil {
+			return e
+		}
+		if *operationRoot == "" || *output == "" {
+			return errors.New("--operations-root and --output required")
+		}
+		o, e := snapshotOperations(*operationRoot, main)
+		if e != nil {
+			return e
+		}
+		result["fingerprints"] = len(o.Collector.Fingerprints)
+		result["reviewed_posts"] = len(o.Reviewed.Posts)
+		result["delivered_offers"] = len(o.Reviewed.Offers)
+		result["first_notification_preserved"] = true
+		if *apply {
+			b := jsonBytes(o)
+			if e = atomicFile(*output, b); e != nil {
+				return e
+			}
+			result["applied"] = true
+			result["operations_sha256"] = digest(b)
+		}
+	case "verify-operations", "restore-operations":
+		main, e := readSnapshot(*snap, *sp, *pin)
+		if e != nil {
+			return e
+		}
+		o, e := readOperations(*operationsFile, *operationsSHA, main)
+		if e != nil {
+			return e
+		}
+		result["fingerprints"] = len(o.Collector.Fingerprints)
+		result["delivered_offers"] = len(o.Reviewed.Offers)
+		result["first_notification_preserved"] = true
+		if args[0] == "restore-operations" {
+			if *dest == "" {
+				return errors.New("--new-root required")
+			}
+			if *apply {
+				if e = restoreOperations(o, main, *dest, -1); e != nil {
+					return e
+				}
+				result["applied"] = true
+			}
+		}
 	case "activation-env":
 		return printActivationEnv(*stateRoot, *source, *sp, *pin, *component)
 	case "snapshot":

@@ -8,7 +8,7 @@ The selected browser layer remains the separately verified headed Playwright 1.6
 
 | Source capability | Native implementation | Evidence or explicit difference |
 |---|---|---|
-| Collector seven sources, 40/4/16 limits, stable ranking | Preserved native Go | 1,310 multilingual policy fixtures plus full scan/dedup/state goldens from immutable Python |
+| Collector seven sources, 40/4/16 limits, stable ranking | Preserved in explicit legacy profile | 1,310 multilingual policy fixtures plus full scan/dedup/state goldens from immutable Python |
 | Independent body eligibility, trust-gated body suppression, title-only exception | Preserved | Golden scan cycles, Unicode fingerprints, secret redaction, 2,500-key trimming |
 | JSON/HTML listing and source-specific detail parsing | Native DOM/JSON parser | Browser preformatted JSON is unwrapped; recognized empty arrays distinguished from blocked/unrecognized pages; content-free source diagnostics added. Listings resolve relative links against the observed final response URL |
 | URL canonicalization, full casefold and Python regex assertions | Preserved native Go | Generated Unicode 15 tables, contextual Greek final sigma, regexp2 lookarounds, source-derived goldens |
@@ -33,6 +33,10 @@ The selected browser layer remains the separately verified headed Playwright 1.6
 | Observations history | Not migrated | No prior cookies, credentials, sessions or observation history copied. Result traces expose current operation; the old append-only observations logging hook is not recreated |
 | Browser recovery | Existing verified backend | Go private queue client handles bounded requests/cancellation and verifies headed+sandbox flags. Browser helper lifecycle changes require separate authorized handling |
 | Cron/classification/delivery | Still paused/inert | Imported prompt, model/provider, schedule and delivery destination preserved as data; no scheduler activation, model invocation or Discord sends |
+
+## Bounded wide-recall extension
+
+The CLI defaults to the intentional wide-recall extension; legacy remains available with `--profile legacy`. See [WIDE_RECALL.md](docs/WIDE_RECALL.md) for 120/12/48 bounds, public pagination, expanded lexical review clues, unchanged safety boundaries and fingerprint migration. Oracle tests still verify legacy behavior, not an asserted identity for the wider profile.
 
 ## Verification
 

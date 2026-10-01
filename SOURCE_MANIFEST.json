@@ -293,13 +293,13 @@
     },
     {
       "path": "insane-search-migration/COLLECTOR.md",
-      "bytes": 3314,
-      "sha256": "e9ced81dce33bd99ef3bedd08216af7f6c0afa641a1e3375e573e8303642f25c"
+      "bytes": 3574,
+      "sha256": "63680792534b5a03b1d241d0a393059b96ac8a06e572537e9d7971586c8779e9"
     },
     {
       "path": "insane-search-migration/NATIVE_ENGINE_PARITY.md",
-      "bytes": 10199,
-      "sha256": "564c611561d501302d10135646f8592552cb5f17c037655f05bf973c2820a8b5"
+      "bytes": 10620,
+      "sha256": "c5916b903050305447985ebc15bd5ee9d0bcd1d8d1aa2f91a4855f311b93f835"
     },
     {
       "path": "insane-search-migration/NATIVE_EXTRACTION.md",
@@ -308,8 +308,8 @@
     },
     {
       "path": "insane-search-migration/README.md",
-      "bytes": 5529,
-      "sha256": "fee152cff86ccf9d1c73bdf1920b9d9dc32bc208289eddd8c6d664915c5bfd28"
+      "bytes": 5789,
+      "sha256": "6c189d438dbe905641bcdb739ff12d3389049090de82e9ec36e03778114d7ca1"
     },
     {
       "path": "insane-search-migration/cmd/discord-report/main.go",
@@ -328,8 +328,8 @@
     },
     {
       "path": "insane-search-migration/cmd/insane/main.go",
-      "bytes": 7755,
-      "sha256": "bb5be87a67b8911f7301073de0df4b9cb8a31c5a13a95a5898a5b50b7cbc8bea"
+      "bytes": 8806,
+      "sha256": "8593cb1ec550960deb2cfad7cf41ece7f6a416adbe37b322ac6559309d991e8d"
     },
     {
       "path": "insane-search-migration/config/discord-report.json",
@@ -352,6 +352,11 @@
       "sha256": "31ccf43b7cba2c18f9a30c29049dde303d7e8cf8fbcd484e3aeb01a31613ac15"
     },
     {
+      "path": "insane-search-migration/docs/WIDE_RECALL.md",
+      "bytes": 5742,
+      "sha256": "2cbca693b340d915717e757498af4d0a5e119787a1f318799c11d78f2e0ad795"
+    },
+    {
       "path": "insane-search-migration/go.mod",
       "bytes": 519,
       "sha256": "e2c234ba3004ebeaab2c8924ef75d4d5c90b7b36a92bf6a8e5f7f4e46fde5ba2"
@@ -368,8 +373,8 @@
     },
     {
       "path": "insane-search-migration/internal/collector/collector.go",
-      "bytes": 8342,
-      "sha256": "167f78e192b6cd22db89d4208937e119fca05de86c3af4865c1b92137256215f"
+      "bytes": 10926,
+      "sha256": "23d105947c6337d0fc3ed489f38c5b6ff90d304ca55a9f0d6b92e001e5a44952"
     },
     {
       "path": "insane-search-migration/internal/collector/differential_test.go",
@@ -388,8 +393,8 @@
     },
     {
       "path": "insane-search-migration/internal/collector/native_backend.go",
-      "bytes": 5999,
-      "sha256": "207d73464f73988075d7f904015d0d71c43b3972e36808d20e4ad2eb9189f9f0"
+      "bytes": 9123,
+      "sha256": "cd1b0b60619fba557771c5917a8ecdc5d9ce14d5a3a995727269f5bf3194e1e2"
     },
     {
       "path": "insane-search-migration/internal/collector/native_backend_test.go",
@@ -397,9 +402,24 @@
       "sha256": "471cc0ffbfc60658b1da8d055e7f293154baf0efe4e57a01ffa132348a8a4c71"
     },
     {
+      "path": "insane-search-migration/internal/collector/options.go",
+      "bytes": 2142,
+      "sha256": "875fcaddef740894faccd9b8d99b0a03a339b50d28f76b281de553fb30c1a5a4"
+    },
+    {
       "path": "insane-search-migration/internal/collector/oracle_bridge_test.go",
       "bytes": 3173,
       "sha256": "b0cf5fa31c1700c5837f47247909082b476545fed71f50c74ac38cbe0c109827"
+    },
+    {
+      "path": "insane-search-migration/internal/collector/pagination.go",
+      "bytes": 5545,
+      "sha256": "7684f7eea9b07aec4f169a47c01552c2add71d558c834915aae81ca5b74f4ebd"
+    },
+    {
+      "path": "insane-search-migration/internal/collector/pagination_test.go",
+      "bytes": 15373,
+      "sha256": "53b208594db15fd5c3562af533ba0d8269de5d2a54e18c639803422f7c586001"
     },
     {
       "path": "insane-search-migration/internal/collector/policy.go",
@@ -410,6 +430,21 @@
       "path": "insane-search-migration/internal/collector/policy_data.json",
       "bytes": 7784,
       "sha256": "1032a852d1ed0ef28155a4ed9f7044b15b6ec176f939f30cefcceb6c26e578e7"
+    },
+    {
+      "path": "insane-search-migration/internal/collector/recall.go",
+      "bytes": 2666,
+      "sha256": "94f853cea8f79ee14537e937cd63cd6e50d9d9efca6efb11a37bf4ce640e17db"
+    },
+    {
+      "path": "insane-search-migration/internal/collector/recall_test.go",
+      "bytes": 8360,
+      "sha256": "643626a16d6b66e2ecff503a64079e1b64a53575551de783e61c82dacceaffbd"
+    },
+    {
+      "path": "insane-search-migration/internal/collector/review_history.go",
+      "bytes": 1502,
+      "sha256": "48d28bfba717558e142cbd572125dac0a33b980686cb5c29bacbe9714d2d0dfd"
     },
     {
       "path": "insane-search-migration/internal/collector/state.go",
@@ -678,8 +713,8 @@
     },
     {
       "path": "insane-search-migration/tools/verify_collector.sh",
-      "bytes": 1057,
-      "sha256": "2f165aa0f468bb709275b1331b1cec0aafff1b5d0e4e6bb64e5aa562f00d0b55"
+      "bytes": 1091,
+      "sha256": "ba6ff6e76794fe63bf6937ac1adceef0b05e38583e549270ca42e7819c86c03f"
     },
     {
       "path": "insane-search-migration/vendor/insane-search/CHANGELOG.md",
@@ -1023,8 +1058,8 @@
     },
     {
       "path": "recovery/README.ko.md",
-      "bytes": 16354,
-      "sha256": "4ccc5526b6fd422c7d45184c56d3d893ce6f6902b2f79eb415400b31fa6c745e"
+      "bytes": 20079,
+      "sha256": "05b6c2e453f3ea66589cee96ab48adb34b12e24c9774b574a35872f058d6ad71"
     },
     {
       "path": "recovery/TOOLCHAIN.lock.json",
@@ -1068,8 +1103,18 @@
     },
     {
       "path": "recovery/main.go",
-      "bytes": 5346,
-      "sha256": "811f2b7ee83def3bcba5593e3cdf38651b88a6df6aff2861d564886e04e6a9f8"
+      "bytes": 7018,
+      "sha256": "a9044250f18f301142ddecf2b65396f6af1ac46fd82442699a42a6fe693491cd"
+    },
+    {
+      "path": "recovery/operations.go",
+      "bytes": 17169,
+      "sha256": "f934f64ffd18dedfaf02be3a8654750aadf338265ecefa2f3b1346c75bd2d0ad"
+    },
+    {
+      "path": "recovery/operations_test.go",
+      "bytes": 9474,
+      "sha256": "01a508fd41bedb990b76dab3476e1d30a920ced659a659e6bf4aaaa102b360be"
     },
     {
       "path": "recovery/recovery_test.go",

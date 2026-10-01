@@ -14,28 +14,39 @@ import (
 )
 
 type SourceDiagnostic struct {
-	Source       string `json:"source"`
-	Format       string `json:"format,omitempty"`
-	Recognized   bool   `json:"recognized"`
-	Parsed       int    `json:"parsed"`
-	Scanned      int    `json:"scanned"`
-	FetchVerdict string `json:"fetch_verdict,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Source            string `json:"source"`
+	Format            string `json:"format,omitempty"`
+	Recognized        bool   `json:"recognized"`
+	Parsed            int    `json:"parsed"`
+	Scanned           int    `json:"scanned"`
+	FetchVerdict      string `json:"fetch_verdict,omitempty"`
+	Error             string `json:"error,omitempty"`
+	PagesAttempted    int    `json:"pages_attempted"`
+	PagesFetched      int    `json:"pages_fetched"`
+	ContinuationError string `json:"continuation_error,omitempty"`
+	PaginationStop    string `json:"pagination_stop,omitempty"`
 }
 type NativeBackend struct {
 	Fetcher          *engine.Fetcher
 	OperationTimeout time.Duration
+	Options          ScanOptions
+	listingSleep     func(context.Context, time.Duration) error
 	mu               sync.Mutex
 	diagnostics      []SourceDiagnostic
 }
 
 func NewNativeBackend(fetcher *engine.Fetcher, timeout time.Duration) *NativeBackend {
-	return &NativeBackend{Fetcher: fetcher, OperationTimeout: timeout, diagnostics: []SourceDiagnostic{}}
+	return &NativeBackend{Fetcher: fetcher, OperationTimeout: timeout, Options: LegacyScanOptions(), diagnostics: []SourceDiagnostic{}}
 }
 func (b *NativeBackend) Diagnostics() []SourceDiagnostic {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return append([]SourceDiagnostic{}, b.diagnostics...)
+	diagnostics := append([]SourceDiagnostic{}, b.diagnostics...)
+	for i := range diagnostics {
+		diagnostics[i].Error = Redact(diagnostics[i].Error)
+		diagnostics[i].ContinuationError = Redact(diagnostics[i].ContinuationError)
+	}
+	return diagnostics
 }
 func (b *NativeBackend) fetch(ctx context.Context, raw string, markdown bool, acceptEmpty ...bool) (string, string, string, error) {
 	text, failure, verdict, _, err := b.fetchWithFinalURL(ctx, raw, markdown, acceptEmpty...)
@@ -68,29 +79,128 @@ func (b *NativeBackend) fetchWithFinalURL(ctx context.Context, raw string, markd
 	return result.Content, "", result.Verdict, result.FinalURL, nil
 }
 func (b *NativeBackend) Listing(ctx context.Context, source Source) ([]Row, string, error) {
-	text, failure, verdict, finalURL, e := b.fetchWithFinalURL(ctx, source.URL, false, true)
-	diag := SourceDiagnostic{Source: source.Name, FetchVerdict: verdict, Error: failure}
-	defer func() { b.mu.Lock(); b.diagnostics = append(b.diagnostics, diag); b.mu.Unlock() }()
-	if e != nil {
-		return nil, "", e
+	opts := b.Options
+	if opts == (ScanOptions{}) {
+		opts = LegacyScanOptions()
 	}
-	if failure != "" {
-		return nil, failure, nil
+	if err := opts.Validate(); err != nil {
+		return nil, "", err
 	}
-	if finalURL == "" {
-		finalURL = source.URL
-	}
-	parsed, d := extract.ParseListing(source.Name, finalURL, text)
-	diag.Format, diag.Recognized, diag.Parsed, diag.Scanned, diag.Error = d.Format, d.Recognized, d.Parsed, min(d.Parsed, MaxScanPerSource), d.Error
-	if !d.Recognized {
-		if diag.Error == "" {
-			diag.Error = "unrecognized_listing"
+	diag := SourceDiagnostic{Source: source.Name}
+	defer func() {
+		b.mu.Lock()
+		b.diagnostics = append(b.diagnostics, diag)
+		b.mu.Unlock()
+	}()
+	rows := []Row{}
+	seen := map[string]bool{}
+	route, supported := routeForListing(source)
+	raw := source.URL
+	for page := 1; page <= opts.MaxListingPages; page++ {
+		if err := ctx.Err(); err != nil {
+			return rows, "", err
 		}
-		return []Row{}, diag.Error, nil
-	}
-	rows := make([]Row, 0, len(parsed))
-	for _, r := range parsed {
-		rows = append(rows, Row{Source: r.Source, Title: r.Title, URL: r.URL, ListingExcerpt: StripPoison(r.ListingExcerpt)})
+		if page > 1 {
+			if err := b.waitForListingPage(ctx); err != nil {
+				return rows, "", err
+			}
+		}
+		diag.PagesAttempted++
+		text, failure, verdict, finalURL, err := b.fetchWithFinalURL(ctx, raw, false, true)
+		diag.FetchVerdict = verdict
+		if err != nil {
+			if page == 1 || ctx.Err() != nil {
+				diag.Error = err.Error()
+				return rows, "", err
+			}
+			failure = err.Error()
+		}
+		if failure != "" {
+			if page == 1 {
+				diag.Error = failure
+				return nil, failure, nil
+			}
+			diag.ContinuationError = fmt.Sprintf("page_%d: %s", page, failure)
+			diag.PaginationStop = "continuation_failed"
+			return rows, "", nil
+		}
+		diag.PagesFetched++
+		if finalURL == "" {
+			finalURL = raw
+		}
+		if supported {
+			_, expectedPage, _ := route.parse(raw)
+			_, actualPage, safe := route.parse(finalURL)
+			if !safe || expectedPage != actualPage {
+				failure = "unsafe_or_repeated_listing_redirect"
+			}
+		}
+		parsed, d := extract.ParseListing(source.Name, finalURL, text)
+		if failure == "" && !d.Recognized {
+			failure = d.Error
+			if failure == "" {
+				failure = "unrecognized_listing"
+			}
+		}
+		if failure != "" {
+			if page == 1 {
+				diag.Error = failure
+				return []Row{}, failure, nil
+			}
+			diag.ContinuationError = fmt.Sprintf("page_%d: %s", page, failure)
+			diag.PaginationStop = "continuation_failed"
+			return rows, "", nil
+		}
+		diag.Format, diag.Recognized = d.Format, true
+		diag.Parsed += d.Parsed
+		// Legacy discovery counted the first raw rows before deduplication.
+		// Keep that exact boundary for the original single-page profile.
+		if opts.Profile == "legacy" && opts.MaxListingPages == 1 {
+			for _, r := range parsed {
+				rows = append(rows, Row{Source: r.Source, Title: r.Title, URL: r.URL, ListingExcerpt: StripPoison(r.ListingExcerpt)})
+			}
+			diag.Scanned = min(len(rows), opts.MaxScanPerSource)
+			diag.PaginationStop = "page_limit"
+			return rows, "", nil
+		}
+		added := 0
+		for _, r := range parsed {
+			key := CanonicalURL(r.URL)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			rows = append(rows, Row{Source: r.Source, Title: r.Title, URL: r.URL, ListingExcerpt: StripPoison(r.ListingExcerpt)})
+			added++
+			if len(rows) >= opts.MaxScanPerSource {
+				break
+			}
+		}
+		diag.Scanned = len(rows)
+		switch {
+		case len(rows) >= opts.MaxScanPerSource:
+			diag.PaginationStop = "row_limit"
+		case len(parsed) == 0:
+			diag.PaginationStop = "empty_page"
+		case added == 0:
+			diag.PaginationStop = "repeated_page"
+		case !supported:
+			diag.PaginationStop = "unsupported_pagination"
+		case page >= opts.MaxListingPages:
+			diag.PaginationStop = "page_limit"
+		default:
+			var continuationError string
+			raw, continuationError = route.next(finalURL, text)
+			if continuationError != "" {
+				diag.ContinuationError = continuationError
+				diag.PaginationStop = "continuation_rejected"
+			} else if raw == "" {
+				diag.PaginationStop = "no_next_page"
+			}
+		}
+		if diag.PaginationStop != "" {
+			break
+		}
 	}
 	return rows, "", nil
 }

@@ -2,6 +2,8 @@
 
 # Insane Search: native Go migration for the VM
 
+`scan` defaults to the bounded wide-recall review profile (120 rows/source, up to 3 public pages, 12 details/source, 48 total). See [wide-recall behavior and legacy compatibility](docs/WIDE_RECALL.md). Candidates require assistant verification and selection.
+
 The promotion collector, search, HTTP/TLS engine, validators, extraction, persistent learning and browser queue client now run in Go. **Python is not a production dependency.** The selected headed browser layer remains Playwright 1.63.0/Node plus Chromium, as requested. The alternative agent-browser candidate was evaluated but not selected.
 
 The verified native runtime is installed as `bin/insane` (2026-10-01 UTC). The same build is retained as `bin/insane.native-candidate`; the original cron remains paused. Building or testing this project does not activate a scheduler, call a model, create credentials or send Discord messages. See [verified deployment](VERIFIED_DEPLOYMENT.md) for evidence and remaining limits.

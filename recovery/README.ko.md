@@ -154,3 +154,42 @@ health는 기계 판독 JSON입니다. credential `missing`, `insecure`, `empty`
 ## 검증 범위
 
 `go test -race ./...`와 `go vet ./...`은 별도 임시 디렉터리·합성 DB·임시 sleep 프로세스로만 검사합니다. 테스트는 잘못된 hash/nonce, duplicate ledger/event, archive traversal, symlink/hardlink, 기존 root 보호, 쓰기 중단 rollback, 비공개 권한, 원문 비포함, pending 전송 0건 및 PID 재사용 거부를 포함합니다. 실제 gateway DB migration/중복 이벤트 및 publisher 동일 run 재실행은 독립 통합 검증 결과를 함께 확인합니다. 테스트 통과는 전원 손실·부팅·모델 소비자 자동 가동 성공의 증거가 아닙니다.
+
+## 수집기·첫 알림 상태도 함께 복구하기
+
+이 추가 스냅샷은 본문 없는 메인 snapshot.json과 정확한 소스 manifest에 연결됩니다. 후보 수집 범위를 넓혀도 이전 혜택 전달 기록과 한 번만 하기로 한 ChatGPT 결과 알림을 잊지 않게 보존합니다.
+
+- state.json: 수집기 version=1, URL→SHA-256 fingerprints 및 선택적 wide_reviewed_v1(URL→양의 검토 순번). wide 표식은 실제 fingerprint URL의 부분집합이며 최대 2,500개입니다
+- reviewed-offers.json: 상세/간략 검토 항목, 혜택 ID와 원래 URL, 전달 run/payload 해시/정확한 Discord 영수증
+- first-auto-notification.json: 이미 수락된 첫 ChatGPT 확인의 message ID와 해당 run의 Discord 영수증. 새로운 알림을 보내지 않습니다
+- schedule.json: 기존 스케줄 ID·간격·시간대의 역사적 기록. enabled=true는 새 스케줄 등록 권한이나 등록 완료를 의미하지 않습니다
+- RUNBOOK.md: 당시 운영 안내를 그대로 남기는 읽기 전용 자료. 내용이나 과거 경로를 자동 실행하지 않습니다
+
+운영 파일 다섯 개는 단일 트랜잭션으로 갱신되지 않습니다. 이 명령의 두 번 읽기 비교는 수집 중 변경 여부만 확인하며 원자적 다중 파일 일관성을 증명하지 않습니다. 반드시 실제 scan/review/delivery와 상태 commit이 끝나고 새 실행이 없는 시점에 백업합니다.
+
+JSON에 모르는 필드·중복 키가 있으면 무시하지 않고 중단합니다. 알려진 인증정보 패턴도 거부합니다. 외부 원문 scan/report 본문·인증정보·프로파일을 이 명령으로 묶지 않습니다. DCInside는 검증된 ai_utilize 게시물의 id/no query만 보존하며 임의 query는 허용하지 않습니다.
+
+```sh
+# 먼저 최신 완료 상태와 outbox로 메인 snapshot을 생성·검증합니다.
+dot-recovery snapshot-operations \
+  --operations-root /absolute/private/ai-benefits-cron \
+  --snapshot "$PRIVATE_SNAPSHOT" --snapshot-sha "$TRUSTED_SNAPSHOT_SHA" \
+  --manifest-sha "$TRUSTED_MANIFEST_SHA" \
+  --output /absolute/private/operations-snapshot.json
+# 검증 성공 후 같은 명령에 --apply를 붙여 새 파일을 생성합니다.
+
+dot-recovery verify-operations \
+  --operations "$PRIVATE_OPERATIONS" --operations-sha "$TRUSTED_OPERATIONS_SHA" \
+  --snapshot "$PRIVATE_SNAPSHOT" --snapshot-sha "$TRUSTED_SNAPSHOT_SHA" \
+  --manifest-sha "$TRUSTED_MANIFEST_SHA"
+
+dot-recovery restore-operations \
+  --operations "$PRIVATE_OPERATIONS" --operations-sha "$TRUSTED_OPERATIONS_SHA" \
+  --snapshot "$PRIVATE_SNAPSHOT" --snapshot-sha "$TRUSTED_SNAPSHOT_SHA" \
+  --manifest-sha "$TRUSTED_MANIFEST_SHA" \
+  --new-root "$HOME/dot-recovery-safe/restored-collector" --apply
+```
+
+복원된 수집기 root는 state.json, reviewed-offers.json, first-auto-notification.json, schedule.json, RUNBOOK.md와 메인 스냅샷에 연결된 outbox/target.json·run 영수증을 함께 가집니다. 새 빈 outbox를 만들지 않습니다. 완료 영수증은 그대로, 미확정 영수증은 uncertain으로 보존합니다. RECOVERY_BLOCK.json도 항상 생성합니다.
+
+재가동 전에 기존 자동화가 이 새 root를 사용하도록 승인된 환경 설정을 검토해야 합니다. RUNBOOK의 과거 절대 경로는 자동 변경되지 않습니다. 이미 보낸 혜택은 reviewed-offers와 outbox를 모두 확인하고, first-auto-notification의 기존 수락 기록을 지우거나 다시 보내지 않습니다. 이 명령은 스케줄러 API나 ChatGPT/Discord에 접근하지 않습니다. 최신 이력 대조·기존 sender 중지·별도 활성화 승인은 여전히 필요합니다.

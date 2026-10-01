@@ -1,5 +1,7 @@
 # Native Go collector, search and fetch
 
+`scan` defaults to the bounded wide-recall review profile (120 rows/source, up to 3 public pages, 12 details/source, 48 total). See [wide-recall behavior and legacy compatibility](docs/WIDE_RECALL.md). Candidates require assistant verification and selection.
+
 The active migration candidate is `bin/insane.native-candidate`. It is statically linked (`CGO_ENABLED=0`) and needs no Python runtime. The existing headed Playwright/Node browser service remains selected, as requested; the native Go queue client uses it when HTTP cannot establish a safe successful response.
 
 See [NATIVE_ENGINE_PARITY.md](NATIVE_ENGINE_PARITY.md) for the exact feature matrix, tests, remaining behavior differences and operational safeguards. See [NATIVE_EXTRACTION.md](NATIVE_EXTRACTION.md) for native HTML/PDF/search parsing differences. [docs/HYBRID_PHASE.md](docs/HYBRID_PHASE.md) is historical context for the superseded hybrid implementation, not current setup guidance.

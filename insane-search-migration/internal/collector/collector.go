@@ -44,9 +44,10 @@ type Failure struct {
 	Error  string `json:"error"`
 }
 type Report struct {
-	Candidates        []Candidate        `json:"candidates"`
-	FailedSources     []Failure          `json:"failed_sources"`
-	SourceDiagnostics []SourceDiagnostic `json:"source_diagnostics,omitempty"`
+	Candidates        []Candidate           `json:"candidates"`
+	FailedSources     []Failure             `json:"failed_sources"`
+	SourceDiagnostics []SourceDiagnostic    `json:"source_diagnostics,omitempty"`
+	Collection        *CollectionDiagnostic `json:"collection,omitempty"`
 }
 type Backend interface {
 	Listing(context.Context, Source) ([]Row, string, error)
@@ -104,12 +105,31 @@ func CanonicalURL(s string) string {
 	return base
 }
 func Scan(ctx context.Context, backend Backend, state *State) (report Report, err error) {
+	return ScanWithOptions(ctx, backend, state, LegacyScanOptions())
+}
+
+// ScanWithOptions widens the bounded review queue without deciding acceptance.
+// Scan preserves the original profile for callers and differential fixtures.
+func ScanWithOptions(ctx context.Context, backend Backend, state *State, options ScanOptions) (report Report, err error) {
+	if err = options.Validate(); err != nil {
+		return report, err
+	}
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("collector aborted without saving state: %v", p)
 		}
 	}()
 	report = Report{Candidates: []Candidate{}, FailedSources: []Failure{}}
+	diagnostic := &CollectionDiagnostic{Options: options, ReviewOnly: true}
+	var reviewHistory map[string]uint64
+	var reviewSequence uint64
+	if options.Profile != "legacy" {
+		report.Collection = diagnostic
+		reviewHistory, reviewSequence, err = loadWideReviewHistory(state)
+		if err != nil {
+			return report, err
+		}
+	}
 	old := map[string]string{}
 	for k, v := range state.Fingerprints {
 		old[k] = v
@@ -125,19 +145,26 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 			return report, e
 		}
 		if failure != "" {
-			report.FailedSources = append(report.FailedSources, Failure{source.Name, failure})
+			report.FailedSources = append(report.FailedSources, Failure{source.Name, Redact(failure)})
 			continue
 		}
 		for i, row := range rows {
-			if i >= MaxScanPerSource {
+			if i >= options.MaxScanPerSource {
 				break
+			}
+			diagnostic.RowsScanned++
+			if options.Profile == "wide" {
+				parsedURL, parseErr := url.Parse(row.URL)
+				if parseErr != nil || parsedURL.User != nil || parsedURL.Host == "" || (parsedURL.Scheme != "https" && parsedURL.Scheme != "http") || Redact(row.URL) != row.URL {
+					continue
+				}
 			}
 			key := CanonicalURL(row.URL)
 			if _, ok := unique[key]; ok {
 				continue
 			}
 			excerpt := StripPoison(row.ListingExcerpt)
-			if !WorthCollecting(row.Title, excerpt, source.Name, key) {
+			if !options.worth(row.Title, excerpt, source.Name, key) {
 				continue
 			}
 			row.URL = key
@@ -147,12 +174,23 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 			uniqueOrder = append(uniqueOrder, key)
 		}
 	}
+	diagnostic.EligibleUnique = len(unique)
 	ranked := []Row{}
 	for _, key := range uniqueOrder {
 		ranked = append(ranked, unique[key])
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
 		a, b := ranked[i], ranked[j]
+		if options.Profile == "wide" {
+			_, seenA := old[a.URL]
+			_, seenB := old[b.URL]
+			if seenA != seenB {
+				return !seenA
+			}
+			if reviewHistory[a.URL] != reviewHistory[b.URL] {
+				return reviewHistory[a.URL] < reviewHistory[b.URL]
+			}
+		}
 		if a.Rank != b.Rank {
 			return a.Rank > b.Rank
 		}
@@ -164,15 +202,16 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 	perSource := map[string]int{}
 	selected := []Row{}
 	for _, r := range ranked {
-		if perSource[r.Source] >= MaxPerSource {
+		if perSource[r.Source] >= options.MaxPerSource {
 			continue
 		}
 		perSource[r.Source]++
 		selected = append(selected, r)
-		if len(selected) >= MaxTotal {
+		if len(selected) >= options.MaxTotal {
 			break
 		}
 	}
+	diagnostic.DetailsSelected = len(selected)
 	for _, row := range selected {
 		if e := ctx.Err(); e != nil {
 			return report, e
@@ -181,6 +220,10 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 		body, detailError, e := backend.Body(ctx, row)
 		if e != nil {
 			return report, e
+		}
+		if options.Profile == "wide" {
+			reviewSequence++
+			reviewHistory[key] = reviewSequence
 		}
 		excerpt := row.ListingExcerpt
 		gated := search("TRUST_GATE_RE", body) || search("TRUST_GATE_RE", excerpt)
@@ -194,10 +237,11 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 		if gated {
 			usable = ""
 		}
-		titleOnlyOK := WorthCollecting(row.Title, "", row.Source, key)
-		independentlyOK := ListingRejected(row.Title, usable, key) == "" && WorthCollecting(row.Title, usable, row.Source, key)
+		independentlyOK := options.rejected(row.Title, usable, key) == "" && options.worth(row.Title, usable, row.Source, key)
 		if gated {
-			independentlyOK = titleOnlyOK && ListingRejected(row.Title, "", key) == "" && !regexp.MustCompile(`合集|汇总|最值钱`).MatchString(row.Title)
+			// Wider lexical hints must not enlarge the legacy title-only
+			// exception when the supporting content is inaccessible.
+			independentlyOK = WorthCollecting(row.Title, "", row.Source, key) && ListingRejected(row.Title, "", key) == "" && !regexp.MustCompile(`合集|汇总|最值钱`).MatchString(row.Title)
 			usable = ""
 		}
 		if !independentlyOK {
@@ -210,6 +254,9 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 		}
 		combined := row.Title + " " + usable
 		ai, strong, weak := Matches(combined)
+		if options.Profile == "wide" {
+			ai, strong, weak = ReviewMatches(combined)
+		}
 		deals := append(append([]string{}, strong...), weak...)
 		if len(deals) > 16 {
 			deals = deals[:16]
@@ -218,13 +265,21 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 		if fingerprintPart == "" {
 			fingerprintPart = runeSlice(usable, 4000)
 		}
-		fingerprint := Fingerprint(row.Title + " " + fingerprintPart)
+		fingerprintInput := row.Title + " " + fingerprintPart
+		broadened := options.Profile == "wide" && !WorthCollecting(row.Title, usable, row.Source, key)
+		if broadened {
+			// Legacy records include rejected detail rows. Reopen only newly
+			// reviewable rows once; keep old emitted offers deduplicated.
+			fingerprintInput = "wide:v1 " + fingerprintInput
+		}
+		fingerprint := Fingerprint(fingerprintInput)
 		change := "new"
 		if _, ok := old[key]; ok {
 			change = "updated"
 		}
 		state.Set(key, fingerprint)
 		if old[key] == fingerprint {
+			diagnostic.Unchanged++
 			continue
 		}
 		quality := []string{}
@@ -239,16 +294,31 @@ func Scan(ctx context.Context, backend Backend, state *State) (report Report, er
 		if LikelyRelay(combined) {
 			quality = append(quality, "likely_relay")
 		}
+		if options.Profile == "wide" {
+			quality = append(quality, "assistant_review_required")
+			if reason := ListingRejected(row.Title, usable, key); reason != "" {
+				quality = append(quality, "review_"+reason)
+			}
+			if broadened {
+				quality = append(quality, "broadened_recall")
+			}
+		}
 		if len(ai) > 12 {
 			ai = ai[:12]
 		}
 		var errorPtr *string
 		if detailError != "" {
+			detailError = Redact(detailError)
 			errorPtr = &detailError
 		}
 		report.Candidates = append(report.Candidates, Candidate{row.Source, Redact(row.Title), row.URL, change, row.Rank, quality, ai, deals, Redact(runeSlice(usable, 3000)), errorPtr})
 	}
 	state.Trim(MaxFingerprints)
+	if options.Profile == "wide" {
+		if err = saveWideReviewHistory(state, reviewHistory); err != nil {
+			return report, err
+		}
+	}
 	if d, ok := backend.(interface{ Diagnostics() []SourceDiagnostic }); ok {
 		report.SourceDiagnostics = d.Diagnostics()
 	}
