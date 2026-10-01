@@ -1,0 +1,1 @@
+{"name":"insane-search-headed-linux","version":"1.0.0","private":true,"description":"Official Playwright headed adapter for the preserved insane-search engine","scripts":{"test":"node --test test_adapter.cjs"},"dependencies":{"playwright":"1.63.0"}}

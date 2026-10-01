@@ -1,0 +1,35 @@
+# Third-party provenance
+
+- Hermes reference: https://github.com/NousResearch/hermes-agent,
+  commit `f42f579cf8bac4918ac9599bece71618afadd846`, MIT, copyright 2025 Nous Research.
+  The full reference tree is not included in this source-only recovery repository.
+  Its original MIT notice is preserved here and in `../third-party-notices/`.
+  This Go implementation ports only the narrow processing/feedback behavior and
+  does not import or execute the upstream Hermes runner.
+- DiscordGo `v0.29.0`: https://github.com/bwmarrin/discordgo, BSD-3-Clause
+- Gorilla WebSocket `v1.5.3`: https://github.com/gorilla/websocket, BSD-2-Clause
+- modernc SQLite `v1.38.2`: https://gitlab.com/cznic/sqlite, BSD-3-Clause;
+  embedded SQLite is public domain. Exact transitive versions/checksums are in
+  `go.mod`/`go.sum`; their license notices are included in module distributions.
+
+## Hermes MIT notice
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

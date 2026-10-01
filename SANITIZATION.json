@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "created_utc": "2026-10-01",
+  "purpose": "Upload-safe source recovery tree; no private delivery history",
+  "transformations": [
+    "Live Discord IDs replaced consistently by documented numeric examples",
+    "Workspace and personal home paths generalized",
+    "Imported job retained only as disabled policy/schedule template; execution/delivery history removed",
+    "Vendor cron instance and original personal-path/source hashes removed",
+    "Proxy runtime file replaced by nonworking example config",
+    "Gateway launcher binary SHA replaced by explicit review-required placeholder",
+    "Private recovery guide, outbox, receipts, scans, real messages, database, browser state and historical runtime evidence excluded",
+    "Historical gateway incident/deployment statistics removed for public source release",
+    "Consumer wrapper proxy replaced with a nonworking .invalid example; shell syntax verified"
+  ],
+  "transformed_paths": [
+    "discord-go-gateway/CLAIM_RECOVERY.md",
+    "discord-go-gateway/CONSUMER_HEALTH.md",
+    "discord-go-gateway/MIGRATION.md",
+    "discord-go-gateway/PARITY_REVIEW.md",
+    "discord-go-gateway/README.md",
+    "discord-go-gateway/bin/dot-bridge",
+    "host-support/GATEWAY_SUPERVISOR_OPERATIONS.md",
+    "host-support/gateway_native_proxy_config.example.json",
+    "host-support/launch_gateway_native.sh",
+    "host-support/start_go_gateway.py",
+    "insane-search-migration/config/discord-report.json",
+    "insane-search-migration/config/imported-job.disabled.json",
+    "insane-search-migration/docs/DISCORD_REPORT.md",
+    "insane-search-migration/internal/reporting/config.go",
+    "insane-search-migration/internal/reporting/rest.go",
+    "insane-search-migration/runtime/browser/README.md",
+    "insane-search-migration/tools/go.sh",
+    "insane-search-migration/vendor/scripts/scan_ai_promotions.py"
+  ]
+}

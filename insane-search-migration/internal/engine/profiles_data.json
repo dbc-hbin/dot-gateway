@@ -1,0 +1,375 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "last_reviewed": "2026-07-20"
+  },
+  "akamai_bot_manager": {
+    "detectors": {
+      "cookie": [
+        "_abck",
+        "bm_sz",
+        "ak_bmsc",
+        "bm_sv",
+        "bm_so"
+      ],
+      "header": [
+        "X-Akamai-*"
+      ],
+      "server_contains": [
+        "AkamaiGHost"
+      ],
+      "body": [
+        "sec-if-cpt-container",
+        "Powered and protected by Akamai"
+      ]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack",
+      "needs_js_exec",
+      "needs_protocol_stealth"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "safari",
+        "safari15_3",
+        "safari15_5",
+        "safari17_0",
+        "safari260"
+      ],
+      [
+        "safari_ios",
+        "safari17_2_ios",
+        "safari260_ios"
+      ],
+      [
+        "chrome99",
+        "chrome100",
+        "chrome101",
+        "chrome104",
+        "chrome110",
+        "chrome116",
+        "chrome119",
+        "chrome124",
+        "chrome131",
+        "chrome133a",
+        "chrome136",
+        "chrome145",
+        "chrome146"
+      ],
+      [
+        "chrome_android",
+        "chrome131_android"
+      ],
+      [
+        "edge99",
+        "edge101"
+      ]
+    ],
+    "tls_impersonate_avoid": [
+      "safari18_0",
+      "chrome107",
+      "chrome120",
+      "chrome123",
+      "firefox",
+      "firefox133",
+      "firefox135"
+    ],
+    "referer_strategies": [
+      "self_root"
+    ],
+    "url_transform_order": [
+      "original",
+      "mobile_subdomain"
+    ],
+    "fallback_when_challenge": [
+      "curl_grid_exhaust",
+      "protocol_stealth_chrome",
+      "playwright_real_chrome",
+      "ego_browser"
+    ],
+    "notes": "DO NOT encode site-specific selectors or byte-size fingerprints here.\nThose belong to caller's success_selectors param or observations log.\n"
+  },
+  "cloudflare_turnstile": {
+    "detectors": {
+      "cookie": [
+        "cf_clearance",
+        "__cf_bm",
+        "__cfduid"
+      ],
+      "header": [
+        "cf-ray",
+        "cf-cache-status"
+      ],
+      "server_contains": [
+        "cloudflare"
+      ],
+      "body": [
+        "Just a moment...",
+        "Checking your browser",
+        "cf-chl-bypass",
+        "Attention Required! | Cloudflare"
+      ]
+    },
+    "capabilities_needed": [
+      "needs_js_exec",
+      "needs_protocol_stealth"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "chrome",
+        "chrome_android"
+      ]
+    ],
+    "referer_strategies": [
+      "google_search",
+      "self_root"
+    ],
+    "fallback_when_challenge": [
+      "playwright_mcp",
+      "protocol_stealth_chrome",
+      "playwright_real_chrome",
+      "ego_browser"
+    ]
+  },
+  "f5_big_ip": {
+    "detectors": {
+      "cookie": [
+        "BigIPServer",
+        "TS01*",
+        "F5_*"
+      ],
+      "body": [
+        "The requested URL was rejected",
+        "support ID is:"
+      ]
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "safari",
+        "chrome"
+      ]
+    ],
+    "referer_strategies": [
+      "self_root"
+    ]
+  },
+  "aws_waf": {
+    "detectors": {
+      "cookie": [
+        "aws-waf-token"
+      ],
+      "header": [
+        "x-amzn-requestid",
+        "x-amzn-errortype",
+        "x-amzn-waf-*"
+      ]
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "chrome"
+      ]
+    ],
+    "referer_strategies": [
+      "self_root"
+    ]
+  },
+  "datadome_probable": {
+    "detectors": {
+      "cookie": [
+        "datadome"
+      ],
+      "body": [
+        "DataDome"
+      ]
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack",
+      "needs_js_exec",
+      "needs_protocol_stealth"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "safari",
+        "chrome"
+      ]
+    ],
+    "fallback_when_challenge": [
+      "protocol_stealth_chrome",
+      "playwright_real_chrome",
+      "ego_browser"
+    ],
+    "notes": "\"_probable\" suffix reminds us this is a growing attack surface — mark\nas tentative until cross-site evidence accumulates in observations/.\n"
+  },
+  "perimeterx_human": {
+    "detectors": {
+      "cookie": [
+        "_px3",
+        "_pxhd",
+        "_px2",
+        "pxcts"
+      ],
+      "body": [
+        "px-captcha",
+        "Press & Hold to confirm you are a human"
+      ]
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack",
+      "needs_js_exec",
+      "needs_protocol_stealth"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "safari",
+        "chrome"
+      ]
+    ],
+    "fallback_when_challenge": [
+      "protocol_stealth_chrome",
+      "playwright_real_chrome",
+      "ego_browser"
+    ],
+    "notes": "PerimeterX (now HUMAN Bot Defender). Distinct cookie family from\nDataDome. Keep profiles separate so planner does not pick wrong\nfallback strategy.\n"
+  },
+  "kasada_ips": {
+    "detectors": {
+      "header": [
+        "x-kpsdk-*"
+      ],
+      "body": [
+        "x-kpsdk-ct",
+        "kpsdk-v",
+        "Kasada"
+      ]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack",
+      "needs_js_exec",
+      "needs_protocol_stealth"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "chrome",
+        "chrome131",
+        "chrome133a",
+        "chrome136",
+        "chrome145",
+        "chrome146"
+      ],
+      [
+        "safari",
+        "safari260",
+        "safari2601"
+      ]
+    ],
+    "referer_strategies": [
+      "self_root"
+    ],
+    "url_transform_order": [
+      "original"
+    ],
+    "fallback_when_challenge": [
+      "protocol_stealth_chrome",
+      "playwright_real_chrome",
+      "ego_browser"
+    ],
+    "notes": "Kasada gates with HTTP 429 + a p.js VM challenge, then expects x-kpsdk-*\nheaders on follow-up requests. Detection runs on that same response.\n"
+  },
+  "imperva_incapsula": {
+    "detectors": {
+      "cookie": [
+        "incap_ses_*",
+        "visid_incap_*"
+      ],
+      "header": [
+        "x-iinfo"
+      ],
+      "body": [
+        "Incapsula incident ID",
+        "_Incapsula_Resource",
+        "Request unsuccessful. Incapsula"
+      ]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": [
+      "needs_real_tls_stack",
+      "needs_js_exec"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "chrome",
+        "chrome131",
+        "chrome136"
+      ],
+      [
+        "safari",
+        "safari260"
+      ]
+    ],
+    "referer_strategies": [
+      "self_root"
+    ],
+    "url_transform_order": [
+      "original"
+    ],
+    "fallback_when_challenge": [
+      "playwright_real_chrome",
+      "protocol_stealth_chrome",
+      "ego_browser"
+    ],
+    "notes": "Imperva/Incapsula (Distil merged here). Cookie family incap_ses_*/\nvisid_incap_* is the reliable artifact; body markers fire on the block page.\n"
+  },
+  "unknown_challenge": {
+    "detectors": {},
+    "confidence_rules": {
+      "strong": 0,
+      "weak": 0
+    },
+    "capabilities_needed": [
+      "needs_js_exec"
+    ],
+    "tls_impersonate_candidates": [
+      [
+        "safari",
+        "chrome",
+        "firefox"
+      ],
+      [
+        "safari_ios",
+        "chrome_android"
+      ]
+    ],
+    "referer_strategies": [
+      "self_root",
+      "google_search",
+      "none"
+    ],
+    "url_transform_order": [
+      "original",
+      "mobile_subdomain"
+    ],
+    "fallback_when_challenge": [
+      "playwright_mcp",
+      "playwright_real_chrome",
+      "ego_browser"
+    ],
+    "notes": "When detector returns low-confidence results we land here. Broad,\nconservative grid. Evidence from these runs should feed observations/\nfor eventual profile promotion.\n"
+  }
+}

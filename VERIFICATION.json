@@ -1,0 +1,42 @@
+{
+  "validated_at_utc": "2026-10-01T04:27:09.664597+00:00",
+  "scope": "Sanitized source-only tree; isolated HOME and existing dependency caches; dependency network disabled",
+  "passed": {
+    "search-test": 0,
+    "search-vet": 0,
+    "insane-build": 0,
+    "discord-report-build": 0,
+    "headed-broker-build": 0,
+    "browser-node": 0,
+    "gateway-test": 0,
+    "gateway-vet": 0,
+    "gateway-build": 0,
+    "supervisor-test": 0,
+    "launcher-test": 0
+  },
+  "node_adapter_test_count": 13,
+  "supervisor_tests": 14,
+  "launcher_tests": 4,
+  "skipped": [
+    {
+      "test": "TestPrivateIPCWakesAcrossConnections",
+      "reason": "Execution sandbox prohibits Unix socket creation; a native-host test is required"
+    }
+  ],
+  "not_tested": [
+    "Dependency download/install on an empty VM",
+    "Fresh actual headed Chromium launch",
+    "Credential reconnect or live Discord/auth/browser tests",
+    "Gateway database restoration",
+    "VM reboot or boot auto-start",
+    "New scheduler registration or existing scheduler live availability"
+  ],
+  "security_review": "Strict source allowlist; no private ledger/runtime artifacts; known operational IDs and personal paths absent; high-confidence credential pattern scan found only a literal BEGIN PRIVATE KEY marker in a synthetic rejection test, with no key material",
+  "public_release_notice_review": {
+    "reviewed_utc": "2026-10-01T04:30:00Z",
+    "included": "Insane Search MIT; Hermes MIT; CPython license and Unicode notice; copied top-level notices from every declared Go module/version and Playwright packages",
+    "scope": "No identified missing notice for the included source/reference material; not a blanket legal guarantee or review of a future binary distribution",
+    "source_code_tests_unchanged_after_validation": false,
+    "code_change_after_tests": "Go/Node/Python implementations and all tests unchanged. The consumer shell wrapper proxy hostname changed to a nonworking .invalid example; sh -n passed for both wrappers."
+  }
+}

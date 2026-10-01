@@ -1,0 +1,31 @@
+{
+  "listings": {
+    "dcinside-ai-utilize": {
+      "rows": [
+        {"title": "Synthetic Claude student plan coupon $100", "url": "https://fixture.example/t/101", "listing_excerpt": "Synthetic test only"},
+        {"title": "Synthetic API token 模型", "url": "https://fixture.example/t/102", "listing_excerpt": ""}
+      ]
+    },
+    "linux.do-welfare": {
+      "rows": [
+        {"title": "Synthetic Gemini 学生 免费 1个月", "url": "https://fixture.example/t/201", "listing_excerpt": "无需绑卡"},
+        {"title": "Synthetic Claude coupon $50", "url": "https://fixture.example/t/202", "listing_excerpt": ""},
+        {"title": "Synthetic Claude coupon 合集 $100", "url": "https://fixture.example/t/203", "listing_excerpt": "信任等级不足"},
+        {"title": "Synthetic AI 中转站 优惠", "url": "https://fixture.example/t/204", "listing_excerpt": "$100"}
+      ]
+    },
+    "v2ex-latest": {
+      "rows": [
+        {"title": "Synthetic Lain promote api token", "url": "https://fixture.example/t/301", "listing_excerpt": ""},
+        {"title": "Synthetic duplicate Claude student plan coupon $100", "url": "http://www.fixture.example/t//101/?ref=duplicate", "listing_excerpt": ""}
+      ]
+    },
+    "nodeloc-latest": {"rows": [], "error": "synthetic_listing_failure"}
+  },
+  "bodies": {
+    "https://fixture.example/t/101": {"text": "Synthetic Claude student plan coupon $100. Example api_key=abcdefghijklmnop is a fake test token.", "error": ""},
+    "https://fixture.example/t/201": {"text": "Synthetic Gemini 教育 student plan 免费 1个月 无需绑卡", "error": ""},
+    "https://fixture.example/t/202": {"text": "登录后可见", "error": ""},
+    "https://fixture.example/t/203": {"text": "需要信任等级", "error": ""}
+  }
+}

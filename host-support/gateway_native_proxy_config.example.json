@@ -1,0 +1,4 @@
+{
+  "BRIDGE_HTTPS_PROXY": "http://proxy.example.invalid:8889",
+  "BRIDGE_NO_PROXY": "localhost,127.0.0.1,::1"
+}

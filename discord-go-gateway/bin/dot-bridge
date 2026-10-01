@@ -1,0 +1,22 @@
+#!/bin/sh
+# Credential-free consumer entry point. No Python interpreter on the hot path.
+set -eu
+case "${1-}" in
+  next|reply|renew|begin|ignore|delivery|status|check|retry-failed|resolve-sent|test-send-status|diagnostic-send|diagnostic-status) ;;
+  *) printf '%s\n' '{"error":"unsupported_offline_command"}'; exit 2 ;;
+esac
+export DISCORD_OWNER_ID=100000000000000005
+export DISCORD_ALLOWED_DM_IDS=100000000000000005
+export DISCORD_EXPECTED_BOT_ID=100000000000000001
+export DISCORD_GUILD_ID=100000000000000002
+export DISCORD_GUILD_CHANNEL_ID=100000000000000004
+export DISCORD_GUILD_MODE=all
+export DISCORD_ENABLE_MESSAGE_CONTENT=true
+export BRIDGE_DB=/opt/assistant-project/.discord-runtime/bridge.sqlite3
+# Same credential-free route as gateway_native_proxy_config.json.
+export BRIDGE_HTTPS_PROXY=http://proxy.example.invalid:8889
+export BRIDGE_NO_PROXY=localhost,127.0.0.1,::1
+export BRIDGE_CONSUMER_ID=dot-discord-reasoning-v1
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$HERE/dot-bridge-cli" "$@"
+

@@ -1,0 +1,17 @@
+#!/bin/sh
+# The active root owns this one listener. Empty bounded polls renew locally;
+# a claim or error is emitted once and returns control to the assistant.
+set -u
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+while :; do
+    result=$("$HERE/dot-bridge" next --wait 300 --lease-seconds 300 --begin --processing-seconds 60)
+    code=$?
+    if [ "$code" -ne 0 ]; then
+        printf '%s\n' "$result"
+        exit "$code"
+    fi
+    case "$result" in
+        '{"message":null}') continue ;;
+        *) printf '%s\n' "$result"; exit 0 ;;
+    esac
+done

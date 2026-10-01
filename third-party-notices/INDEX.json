@@ -1,0 +1,186 @@
+{
+  "scope": "Preserved notices for vendored/reference source and declared runtime dependencies; dependency implementation/binaries are not included. Future binary redistribution must preserve applicable notices from complete module distributions.",
+  "notices": [
+    {
+      "component": "Hermes reference commit f42f579cf8bac4918ac9599bece71618afadd846",
+      "notice": "third-party-notices/hermes-agent-MIT.txt",
+      "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+    },
+    {
+      "component": "Insane Search vendored reference source",
+      "notice": "third-party-notices/insane-search-MIT.txt",
+      "sha256": "e343d30bc6631a1c8377b7aac26e7b1c5b38366913a98ef71fe6861fe812dcd4"
+    },
+    {
+      "component": "CPython Unicode semantics used by generated lookup tables; no interpreter binary included",
+      "notice": "third-party-notices/CPython-3.12-LICENSE.txt",
+      "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+    },
+    {
+      "component": "playwright 1.63.0 dependency, not vendored",
+      "notice": "third-party-notices/playwright-1.63.0/LICENSE",
+      "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+    },
+    {
+      "component": "playwright 1.63.0 dependency, not vendored",
+      "notice": "third-party-notices/playwright-1.63.0/NOTICE",
+      "sha256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d"
+    },
+    {
+      "component": "playwright-core 1.63.0 dependency, not vendored",
+      "notice": "third-party-notices/playwright-core-1.63.0/LICENSE",
+      "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+    },
+    {
+      "component": "playwright-core 1.63.0 dependency, not vendored",
+      "notice": "third-party-notices/playwright-core-1.63.0/NOTICE",
+      "sha256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d"
+    },
+    {
+      "component": "github.com/andybalholm/brotli v1.0.6 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/andybalholm/brotli@v1.0.6/LICENSE",
+      "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94"
+    },
+    {
+      "component": "github.com/andybalholm/cascadia v1.3.5 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/andybalholm/cascadia@v1.3.5/LICENSE",
+      "sha256": "04a8e475337d6b9959a8c47956bf713dd3362d3aadf839e74b376afb07487167"
+    },
+    {
+      "component": "github.com/bwmarrin/discordgo v0.29.0 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/bwmarrin/discordgo@v0.29.0/LICENSE",
+      "sha256": "17a412a84e477d955ab94e21185adad7542a09d0388c8a172de95b3787b07886"
+    },
+    {
+      "component": "github.com/dlclark/regexp2 v1.11.5 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/dlclark/regexp2@v1.11.5/LICENSE",
+      "sha256": "9be5d04bb4d706914d5bf943710da4afeb42048f7c529902fb57c82762a991a9"
+    },
+    {
+      "component": "github.com/dustin/go-humanize v1.0.1 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/dustin/go-humanize@v1.0.1/LICENSE",
+      "sha256": "a973b4498c13eb74baa2a8e5c351426a6826f2fcdd909916dbe53ee2e755fd71"
+    },
+    {
+      "component": "github.com/google/uuid v1.6.0 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/google/uuid@v1.6.0/LICENSE",
+      "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d"
+    },
+    {
+      "component": "github.com/gorilla/websocket v1.5.3 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/gorilla/websocket@v1.5.3/LICENSE",
+      "sha256": "2be1b548b0387ca8948e1bb9434e709126904d15f622cc2d0d8e7f186e4d122d"
+    },
+    {
+      "component": "github.com/klauspost/compress v1.17.4 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/klauspost/compress@v1.17.4/LICENSE",
+      "sha256": "0d9e582ee4bff57bf1189c9e514e6da7ce277f9cd3bc2d488b22fbb39a6d87cf"
+    },
+    {
+      "component": "github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0/LICENSE",
+      "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+    },
+    {
+      "component": "github.com/mattn/go-isatty v0.0.20 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/mattn/go-isatty@v0.0.20/LICENSE",
+      "sha256": "08eab1118c80885fa1fa6a6dd7303f65a379fcb3733e063d20d1bbc2c76e6fa1"
+    },
+    {
+      "component": "github.com/ncruces/go-strftime v0.1.9 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/ncruces/go-strftime@v0.1.9/LICENSE",
+      "sha256": "38ae43959daf953a393a585b2988672cb65a5a541aca0d0be5e72595a0a16883"
+    },
+    {
+      "component": "github.com/refraction-networking/utls v1.8.2 dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/refraction-networking/utls@v1.8.2/LICENSE",
+      "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+    },
+    {
+      "component": "github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec dependency, not vendored",
+      "notice": "third-party-notices/go/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec/LICENSE",
+      "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+    },
+    {
+      "component": "golang.org/x/crypto v0.0.0-20210421170649-83a5a9bb288b dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/crypto@v0.0.0-20210421170649-83a5a9bb288b/LICENSE",
+      "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+    },
+    {
+      "component": "golang.org/x/crypto v0.57.0 dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/crypto@v0.57.0/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/exp@v0.0.0-20250620022241-b7579e27df2b/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "golang.org/x/net v0.59.0 dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/net@v0.59.0/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "golang.org/x/sys v0.34.0 dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/sys@v0.34.0/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "golang.org/x/sys v0.48.0 dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/sys@v0.48.0/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "golang.org/x/text v0.42.0 dependency, not vendored",
+      "notice": "third-party-notices/go/golang.org/x/text@v0.42.0/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "component": "modernc.org/libc v1.66.3 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/libc@v1.66.3/LICENSE",
+      "sha256": "95ff867eb55a56935fa7492406cfa953fb7c13ca73f4c0a86ae05756b4605600"
+    },
+    {
+      "component": "modernc.org/libc v1.66.3 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/libc@v1.66.3/LICENSE-GO",
+      "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+    },
+    {
+      "component": "modernc.org/mathutil v1.7.1 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/mathutil@v1.7.1/LICENSE",
+      "sha256": "bfa9bf72a72ca009fd62a8f84fca3dca67e51d93af96352723646599898b6cf5"
+    },
+    {
+      "component": "modernc.org/memory v1.11.0 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/memory@v1.11.0/LICENSE-LOGO",
+      "sha256": "5ae5bee3072a841376451b48d8cfcec7188e10543926d5870828d36c8a750dc5"
+    },
+    {
+      "component": "modernc.org/memory v1.11.0 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/memory@v1.11.0/LICENSE",
+      "sha256": "59895e669f48f168b6b858358f6005779cdf40a265f7828813061b56af67b496"
+    },
+    {
+      "component": "modernc.org/memory v1.11.0 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/memory@v1.11.0/LICENSE-GO",
+      "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+    },
+    {
+      "component": "modernc.org/memory v1.11.0 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/memory@v1.11.0/LICENSE-MMAP-GO",
+      "sha256": "c2eba69f20d05414538c3a5df7694dde392e065ff70882e1625e90f5d6659fff"
+    },
+    {
+      "component": "modernc.org/sqlite v1.38.2 dependency, not vendored",
+      "notice": "third-party-notices/go/modernc.org/sqlite@v1.38.2/LICENSE",
+      "sha256": "c6fe05491a60ae13bcd223088d2705e36dede24e5587226231d2459ada5c4822"
+    },
+    {
+      "component": "Unicode data used by generated case/property lookup tables",
+      "notice": "third-party-notices/Unicode-LICENSE.txt",
+      "sha256": "bfb121a2aaa8fa3d77f3429ae2aaed879cc53cacad6fbe42a2513043b80fcb9a",
+      "source": "https://www.unicode.org/license.txt"
+    }
+  ]
+}

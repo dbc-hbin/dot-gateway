@@ -1,0 +1,145 @@
+> Source-only recovery edition. Live identity values are deliberately replaced by inert examples. See the repository-root RECOVERY.md before setup. Historical verification links may refer to records intentionally excluded from this repository.
+
+# Go Discord gateway
+
+A single compiled Linux binary replaces the Python gateway and queue CLI. The
+current assistant remains the only author of replies: there is no model/API
+client, execution of incoming text, canned reply, or bot-self conversation.
+
+For reconnect-safe consumption, use a stable `next --consumer-id` per logical
+consumer. See [claim recovery and deployment](CLAIM_RECOVERY.md) before switching
+existing anonymous pollers. Legacy `next` without an identity remains supported.
+
+## Response generation and readiness
+
+This ports the adjacent Python **bridge**, not the full upstream Hermes runner.
+The Python bridge imports Hermes reaction/typing hooks but deliberately does not
+start its message handler or model runner. The Go daemon likewise receives and
+stores messages, shows lifecycle feedback, and sends already-authored replies.
+Neither daemon creates substantive replies by itself.
+
+The current assistant must own a running consumer for the active session:
+
+1. Run `next --consumer-id dot-discord-reasoning-v1 --wait 300` directly in the
+   responding assistant's execution context. Confirm the call actually started;
+   scheduling a listener is not evidence that one is running.
+2. On a claim, call `begin` when the assistant starts real work, then author and
+   queue the reply. `--begin` is appropriate only when the caller will immediately
+   do that work. Renew claim/processing leases separately when needed.
+3. If output is lost, recover with the same consumer identity. A recovered claim
+   does not renew its claim or processing lease; inspect the returned expiry and
+   call `begin` explicitly when resuming work.
+4. Check delivery, then keep the next poll running. A daemon restart does not
+   restart this assistant-side consumer or resume response generation.
+
+The native supervisor manages the gateway process only. Process uptime, a fresh
+gateway heartbeat, an open Discord connection, and a typing lease do not establish
+that an assistant is generating an answer. Consumer status exposes waiting-CLI
+observations and backlog separately; it explicitly does not prove stdout receipt
+or reasoning liveness. There is no supported inactive-session Discord wake in
+this integration, and no reboot auto-start guarantee.
+
+## Components
+
+- DiscordGo handles Gateway protocol/state only. Its REST send/reconnect helpers
+  are not used for message delivery. A cancellable supervisor owns reconnects.
+- One SQLite actor owns one pinned connection per process. Transactions preserve
+  the existing Python inbox, claims, replies, chunks, nonces, feedback and runtime.
+- Owner/type/policy-filtered arrivals enter a durable validation quarantine before
+  any channel GET. Consumers and feedback cannot see them until exact route
+  validation atomically promotes the original envelope, ID and receipt time.
+  Transient GET failures retry with 2/4/8/16/30-second backoff and survive restart.
+  Permission/missing-route/mismatch failures remain blocked and visible until a
+  validated reconnect; authentication failure still latches the supervisor.
+  Quarantined plus pending/claimed inputs share the original 1,000-item capacity.
+- The native gateway holds the **same `.lock` flock** as Python for its entire
+  lifetime. Only one process can dispatch. The REST sender serializes POSTs too.
+- Private owner-only Unix IPC and a private inotify wake file signal committed
+  queue changes immediately. File signaling supports an exec sandbox that cannot
+  create sockets. A one-second maintenance check covers a writer crashing between
+  commit and signal; ready chunks otherwise drain without a fixed sleep.
+- Identity/channel preflight GETs run concurrently. A pooled TLS-verifying HTTP/1
+  client sends each message POST once, with no redirects or replayable body.
+  Known bucket/global limits pace *future* requests; a 429 is not automatically
+  resent. Lost/ambiguous acknowledgements are held as `uncertain` for review.
+- Receipt 👀, lease-bound eight-second typing refresh, completion ✅ and failure
+  ❌ are real lifecycle feedback. Disconnect, expiry, reply and shutdown cancel
+  typing. Symbolic errors avoid logging bodies, credentials or message content.
+- A bounded 2,048-row content-free timing ledger records lifecycle stages using
+  stable persisted timestamps. It distinguishes consumer/model wait from network
+  delivery; changing language cannot remove the external reasoning/tool boundary.
+- Content-free ingress counters expose accepted/duplicate/rejected events, failed
+  route lookup/validation, staging/retry/blocking and a full durable queue.
+  Validation backlog/age appears separately in status. A blocked conversation
+  preserves its order without blocking other conversations' due validation work.
+- Reconnect has one 60-second deadline covering socket Open and validated
+  readiness. Incomplete state or a transient reconnect failure exits with a
+  transient code for the existing bounded process supervisor; permanent auth,
+  identity, route and permission codes remain permanent. Daemon recovery still
+  does not start or restart the assistant-side responder.
+
+## Build and checks
+
+Go 1.24 or later is required; verification used official Go 1.27.1. In this
+workspace `/usr/bin/go` is an unrelated executable: use the verified toolchain.
+
+```sh
+export PATH=/opt/assistant-shared/go-toolchain/go1.27.1/bin:$PATH
+export GOPATH=/opt/assistant-shared/go-path GOCACHE=/opt/assistant-shared/go-cache
+go test -race ./...
+go vet ./...
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -o bin/dot-gateway ./cmd/dot-gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -o bin/dot-gateway-linux-arm64 ./cmd/dot-gateway
+```
+
+The only test skipped in this exec sandbox is Unix-socket creation (`EPERM`);
+run that test on the native host. File/inotify, fake HTTP/WebSocket, migration,
+CLI subprocess, race, and cancellation tests are offline. No test uses a real
+token, live database or Discord endpoint.
+
+## Configuration and CLI
+
+The original `DISCORD_OWNER_ID`, `DISCORD_ALLOWED_DM_IDS`, pinned bot/guild/channel,
+guild mode, approved Message Content, `BRIDGE_DB`, HTTP keepalive and explicit
+credential-free proxy environment settings are retained. Only live `gateway`
+(alias `run-discord`) loads `DISCORD_BOT_TOKEN_FILE`. Offline CLI commands never
+need credentials or connect to Discord. The token loader rejects symlinks,
+nonregular files, foreign ownership and any group/other permission.
+
+```sh
+bin/dot-gateway check
+bin/dot-gateway gateway
+bin/dot-gateway next --wait 30 --begin --processing-seconds 60
+bin/dot-gateway reply INBOUND_ID --claim CLAIM --text-file response.txt
+bin/dot-gateway begin INBOUND_ID --claim CLAIM --lease-seconds 60
+bin/dot-gateway renew INBOUND_ID --claim CLAIM --lease-seconds 300
+bin/dot-gateway delivery REPLY_ID
+bin/dot-gateway status
+```
+
+`ignore`, `retry-failed`, `resolve-sent --verified-in-discord`, and read-only
+`test-send-status` retain the legacy contracts. Flags may follow positional IDs.
+Only explicit `retry-failed` requeues a known failed ordinary chunk; uncertain
+chunks cannot be retried. The old one-shot test-send ledger remains untouched.
+
+## Explicit migration transport tests
+
+`diagnostic-send --index 1` queues one of exactly three lifetime slots (1–3).
+`diagnostic-status --index 1` returns its durable state and timing. These commands
+do not load a token or directly POST: the authorized running gateway dispatches.
+Repeated commands retain the same immutable intent/nonce and cannot reset an
+attempted slot, including failed or uncertain results. Diagnostic messages are
+clearly labeled transport tests, have no fabricated inbound or reply reference,
+and only target the pinned guild channel. No automatic test is sent at startup.
+
+Measures: intent creation, local queue delay, send start, parallel preflight,
+POST through complete ACK, local ACK time and remote snowflake creation time.
+These are transport measurements, **not** human-to-model response latency.
+
+## Provenance
+
+This is a Go behavioral port, not an import of the Python Hermes runtime.
+The adjacent `hermes-dot-gateway` and its full pinned MIT Hermes source remain
+reference/provenance. Receipt/processing/completion behavior follows the narrow
+Hermes lifecycle hooks; unrelated model, voice, command and profile code is not
+included. See `THIRD_PARTY_NOTICES.md`.
