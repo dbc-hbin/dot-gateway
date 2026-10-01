@@ -263,7 +263,7 @@ func TestTypingRetriesTransientAndCancelsDisconnect(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestFeedbackReceiptAndTerminalReaction(t *testing.T) {
+func TestFeedbackReceiptAndSentCleanup(t *testing.T) {
 	var routes []string
 	var mu sync.Mutex
 	r := localREST(t, func(w http.ResponseWriter, q *http.Request) {
@@ -282,7 +282,7 @@ func TestFeedbackReceiptAndTerminalReaction(t *testing.T) {
 	if err := updateFeedback(context.Background(), r, e, "received", "sent"); err != nil {
 		t.Fatal(err)
 	}
-	if len(routes) != 3 || !strings.HasPrefix(routes[0], "PUT ") || !strings.Contains(routes[0], "👀") || !strings.HasPrefix(routes[1], "DELETE ") || !strings.Contains(routes[2], "✅") {
+	if len(routes) != 2 || !strings.HasPrefix(routes[0], "PUT ") || !strings.Contains(routes[0], "👀") || !strings.HasPrefix(routes[1], "DELETE ") || !strings.Contains(routes[1], "👀") {
 		t.Fatal(routes)
 	}
 }

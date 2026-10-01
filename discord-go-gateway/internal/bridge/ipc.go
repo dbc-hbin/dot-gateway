@@ -2,10 +2,12 @@ package bridge
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -165,23 +167,152 @@ func NotifyIPC(path string) {
 	c.Write([]byte("notify\n"))
 }
 func WatchIPC(path string) (net.Conn, *bufio.Reader, error) {
-	c, e := net.DialTimeout("unix", path, time.Second)
+	return watchIPC(context.Background(), path)
+}
+
+type ipcDialFunc func(context.Context, string, string) (net.Conn, error)
+
+// watchIPC bounds both setup stages by the caller's overall wait. Cancellation
+// also interrupts an in-flight handshake rather than waiting for its timeout.
+func watchIPC(ctx context.Context, path string) (net.Conn, *bufio.Reader, error) {
+	return watchIPCWithDialer(ctx, path, (&net.Dialer{}).DialContext)
+}
+
+func watchIPCWithDialer(ctx context.Context, path string, dial ipcDialFunc) (net.Conn, *bufio.Reader, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, time.Second)
+	c, e := dial(dialCtx, "unix", path)
+	cancel()
 	if e != nil {
 		return nil, nil, e
 	}
-	c.SetDeadline(time.Now().Add(2 * time.Second))
+	stopCancel := closeIPCOnCancel(ctx, c)
+	defer stopCancel()
+	until := time.Now().Add(2 * time.Second)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
+		until = deadline
+	}
+	c.SetDeadline(until)
 	if _, e = c.Write([]byte("watch\n")); e != nil {
 		c.Close()
 		return nil, nil, e
 	}
 	r := bufio.NewReader(c)
-	line, e := r.ReadString('\n')
-	if e != nil || line != "ready\n" {
+	// Protocol lines are tiny. ReadSlice rejects an overlong peer response
+	// without allocating an unbounded buffer.
+	line, e := r.ReadSlice('\n')
+	if e != nil || string(line) != "ready\n" || ctx.Err() != nil {
 		c.Close()
 		return nil, nil, errors.New("ipc_watch_failed")
 	}
-	c.SetDeadline(time.Time{})
+	deadline, _ := ctx.Deadline()
+	c.SetDeadline(deadline)
 	return c, r, nil
+}
+
+// closeIPCOnCancel returns a stop function that also joins any already-running
+// close callback, so closing a wake watch leaves no cancellation work behind.
+func closeIPCOnCancel(ctx context.Context, c net.Conn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		c.Close()
+		close(done)
+	})
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}
+}
+
+// WakeWatch multiplexes private socket and file notifications. Both are hints:
+// callers must recheck durable state and retain a recovery polling timer.
+type WakeWatch struct {
+	events    <-chan struct{}
+	cancel    context.CancelFunc
+	done      chan struct{}
+	connected atomic.Bool
+}
+
+// WatchWake installs the file watch before asynchronously setting up IPC. Thus
+// an idle socket or stalled handshake can never mask a file-only notification.
+// The deadline bounds IPC setup and releases all resources; zero means no limit.
+// Setup failures are intentionally nonfatal because durable polling is the
+// authoritative recovery path. Close is safe to call repeatedly or concurrently.
+func WatchWake(path string, deadline time.Time) *WakeWatch {
+	return watchWake(path, deadline, (&net.Dialer{}).DialContext)
+}
+
+func watchWake(path string, deadline time.Time, dial ipcDialFunc) *WakeWatch {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if deadline.IsZero() {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+	}
+	hub := NewWakeHub()
+	events, unsubscribe := hub.Subscribe()
+	watch := &WakeWatch{events: events, cancel: cancel, done: make(chan struct{})}
+	if ctx.Err() != nil {
+		cancel()
+		unsubscribe()
+		close(watch.done)
+		return watch
+	}
+	fileWatch, _ := StartFileWake(path+".wake", hub)
+	ipcDone := make(chan struct{})
+	go func() {
+		defer close(ipcDone)
+		c, r, err := watchIPCWithDialer(ctx, path, dial)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		stopCancel := closeIPCOnCancel(ctx, c)
+		defer stopCancel()
+		watch.connected.Store(true)
+		defer func() {
+			watch.connected.Store(false)
+			if ctx.Err() == nil {
+				// Reset a caller's healthy-socket recovery timer immediately
+				// when the socket disappears or sends an invalid protocol line.
+				hub.Notify()
+			}
+		}()
+		// Recheck commits made between the caller's previous durable query and
+		// completion of this asynchronous subscription, even if file IPC failed.
+		hub.Notify()
+		for {
+			line, err := r.ReadSlice('\n')
+			if err != nil || string(line) != "wake\n" {
+				return
+			}
+			hub.Notify()
+		}
+	}()
+	go func() {
+		defer close(watch.done)
+		<-ctx.Done()
+		if fileWatch != nil {
+			fileWatch.Close()
+		}
+		<-ipcDone
+		unsubscribe()
+	}()
+	return watch
+}
+
+// Events carries coalesced wake hints. It is not closed at the deadline; callers
+// must select their own deadline/recovery timer rather than spin on a closed hint.
+func (w *WakeWatch) Events() <-chan struct{} { return w.events }
+
+// Connected reports whether IPC has completed its subscription and remains
+// healthy, allowing callers to retain their shorter disconnected recovery poll.
+func (w *WakeWatch) Connected() bool { return w.connected.Load() }
+
+func (w *WakeWatch) Close() {
+	w.cancel()
+	<-w.done
 }
 
 // LockDispatcher uses the exact legacy lock path, excluding the Python sender.

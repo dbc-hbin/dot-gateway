@@ -62,6 +62,19 @@ func parse(args []string) (string, []string, map[string]string, error) {
 	return cmd, pos, flags, nil
 }
 func run(args []string) int {
+	trace := newPhaseTrace(os.Getenv("BRIDGE_PHASE_TRACE") == "1")
+	defer trace.flush()
+	output := func(v any) error {
+		trace.mark("stdout_ready")
+		trace.mark("stdout_write_started")
+		err := output(v)
+		if err == nil {
+			trace.mark("stdout_write_finished")
+		} else {
+			trace.mark("stdout_write_failed")
+		}
+		return err
+	}
 	cmd, pos, f, e := parse(args)
 	if e != nil {
 		output(map[string]string{"error": e.Error()})
@@ -112,7 +125,10 @@ func run(args []string) int {
 		output(map[string]any{"configuration": "valid", "scope": scope, "guild_id": nullable(settings.Policy.GuildID), "guild_channel_id": nullable(settings.Policy.GuildChannelID), "guild_mode": nullable(settings.Policy.GuildMode), "message_content_intent": settings.Policy.MessageContentApproved, "discord_transport": transport, "token_checked": false, "network_used": false})
 		return 0
 	}
+	trace.setPath(settings.DBPath)
+	trace.mark("store_open_started")
 	store, e := bridge.OpenStore(settings.DBPath, settings.Policy)
+	trace.mark("store_open_finished")
 	if e != nil {
 		output(map[string]string{"error": "local_store_failed"})
 		return 2
@@ -172,17 +188,24 @@ func run(args []string) int {
 		deadline := time.Now().Add(time.Duration(wait * float64(time.Second)))
 		// A ready/recoverable claim, or a nonblocking check, needs no watcher.
 		// In particular, do not put an IPC handshake ahead of durable work.
+		claimStarted := time.Now()
 		item, err := store.ClaimNextForConsumer(lease, begin, consumer)
+		claimReturned := time.Now()
 		if err != nil {
 			e = err
 			break
 		}
 		if item != nil {
+			trace.markAt("claim_call_started", claimStarted)
+			trace.markAt("claim_returned", claimReturned)
+			trace.setInbound(item.InboundID)
 			result = map[string]any{"message": item}
 			mutated = true
 			break
 		}
 		if !time.Now().Before(deadline) {
+			trace.markAt("claim_call_started", claimStarted)
+			trace.markAt("claim_returned", claimReturned)
 			result = map[string]any{"message": nil}
 			break
 		}
@@ -194,64 +217,54 @@ func run(args []string) int {
 		}
 		// Subscribe before RECHECKING durable state below. An arrival between
 		// the initial fast-path check and subscription cannot be missed.
-		c, r, _ := bridge.WatchIPC(settings.DBPath + ".sock")
-		if c != nil {
-			defer c.Close()
-		}
-		fileHub := bridge.NewWakeHub()
-		fileEvents, unsubscribe := fileHub.Subscribe()
-		defer unsubscribe()
-		fileWatch, _ := bridge.StartFileWake(settings.DBPath+".sock.wake", fileHub)
-		if fileWatch != nil {
-			defer fileWatch.Close()
-		}
+		watch := bridge.WatchWake(settings.DBPath+".sock", deadline)
+		defer watch.Close()
 		for {
 			if pollHealth != nil {
 				_ = pollHealth.Touch()
 			}
 			var item *bridge.Claim
+			claimStarted = time.Now()
 			item, e = store.ClaimNextForConsumer(lease, begin, consumer)
+			claimReturned = time.Now()
 			if e != nil {
 				break
 			}
 			if item != nil {
+				trace.markAt("claim_call_started", claimStarted)
+				trace.markAt("claim_returned", claimReturned)
+				trace.setInbound(item.InboundID)
 				result = map[string]any{"message": item}
 				mutated = true
 				break
 			}
 			if !time.Now().Before(deadline) {
+				trace.markAt("claim_call_started", claimStarted)
+				trace.markAt("claim_returned", claimReturned)
 				result = map[string]any{"message": nil}
 				break
 			}
-			if c != nil {
-				until := time.Now().Add(time.Second)
-				if deadline.Before(until) {
-					until = deadline
-				}
-				c.SetReadDeadline(until)
-				if _, err = r.ReadString('\n'); err != nil {
-					if ne, ok := err.(interface{ Timeout() bool }); !ok || !ne.Timeout() {
-						c.Close()
-						c = nil
-					}
-				}
-			} else {
-				remaining := time.Until(deadline)
-				if remaining > 250*time.Millisecond {
-					remaining = 250 * time.Millisecond
-				}
-				timer := time.NewTimer(remaining)
-				select {
-				case <-fileEvents:
-					timer.Stop()
-				case <-timer.C:
-				}
+			remaining := time.Until(deadline)
+			recovery := time.Second
+			if !watch.Connected() {
+				recovery = 250 * time.Millisecond
 			}
+			if remaining > recovery {
+				remaining = recovery
+			}
+			timer := time.NewTimer(remaining)
+			select {
+			case <-watch.Events():
+				timer.Stop()
+			case <-timer.C:
+			}
+
 		}
 		if pollHealth != nil {
 			_ = pollHealth.Close()
 		}
 	case "reply":
+		trace.mark("reply_input_open_started")
 		var reader io.Reader = os.Stdin
 		if p, ok := f["text-file"]; ok && p != "-" {
 			var file *os.File
@@ -263,15 +276,21 @@ func run(args []string) int {
 			defer file.Close()
 			reader = file
 		}
+		trace.mark("reply_input_open_finished")
 		var data []byte
+		trace.mark("reply_input_read_started")
 		data, e = io.ReadAll(io.LimitReader(reader, 64005))
+		trace.mark("reply_input_read_finished")
 		if e != nil {
 			e = errors.New("reply_read_failed")
 			break
 		}
 		var id string
+		trace.mark("queue_call_started")
 		id, e = store.QueueReply(pos[0], claim, string(data))
+		trace.mark("queue_returned")
 		if e == nil {
+			trace.setInbound(pos[0])
 			result, e = store.Delivery(id)
 			mutated = true
 		}
@@ -343,7 +362,9 @@ func run(args []string) int {
 		return 2
 	}
 	if mutated {
+		trace.mark("notify_started")
 		bridge.NotifyIPC(settings.DBPath + ".sock")
+		trace.mark("notify_finished")
 	}
 	if err := output(result); err != nil {
 		// The operation may already be committed. Do not release a claim or retry

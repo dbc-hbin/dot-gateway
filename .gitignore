@@ -30,3 +30,4 @@ cookies/
 !discord-go-gateway/bin/dot-bridge
 !discord-go-gateway/bin/dot-bridge-listen
 host-support/gateway_native_proxy_config.json
+*.phase-trace

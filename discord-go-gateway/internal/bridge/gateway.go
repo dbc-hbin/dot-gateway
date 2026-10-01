@@ -337,9 +337,9 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	})
 	start(func() {
-		if err := dispatchLoop(ctx, store, hub, g, func(ctx context.Context, c Chunk) SendResult {
+		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
-			return rest.SendGuarded(ctx, c, func() bool {
+			return rest.SendGuardedMeasured(ctx, c, func() bool {
 				return ctx.Err() == nil && g.ready.Load() && g.epoch.Load() == epoch && guildPermissions(s, settings)
 			})
 		}); err != nil {
@@ -594,6 +594,12 @@ func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Setti
 // Drain immediately after each acknowledgement. A maintenance timer only covers
 // a producer crash between SQLite COMMIT and its private-socket notification.
 func dispatchLoop(ctx context.Context, store *Store, hub *WakeHub, g *gatewayState, send func(context.Context, Chunk) SendResult) error {
+	return dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
+		return send(ctx, c), Diagnostics{}
+	})
+}
+
+func dispatchLoopMeasured(ctx context.Context, store *Store, hub *WakeHub, g *gatewayState, send func(context.Context, Chunk) (SendResult, Diagnostics)) error {
 	wake, unsub := hub.Subscribe()
 	defer unsub()
 	tick := time.NewTicker(time.Second)
@@ -608,8 +614,8 @@ func dispatchLoop(ctx context.Context, store *Store, hub *WakeHub, g *gatewaySta
 				break
 			}
 			started := time.Now()
-			result := send(ctx, *c)
-			if e = store.RecordResult(*c, result); e != nil {
+			result, measurement := send(ctx, *c)
+			if e = store.RecordResultMeasured(*c, result, measurement); e != nil {
 				return e
 			}
 			store.RecordTiming("send", time.Since(started))
@@ -703,14 +709,12 @@ func updateFeedback(ctx context.Context, rest *RESTClient, e Envelope, old, targ
 	if err := rest.RemoveReaction(ctx, e, "👀"); err != nil {
 		return err
 	}
-	if target == "ignored" {
+	if target == "ignored" || target == "sent" {
+		// The reply itself is successful completion feedback. Clear receipt
+		// (and any earlier failure above), without adding a success reaction.
 		return nil
 	}
-	emoji := "❌"
-	if target == "sent" {
-		emoji = "✅"
-	}
-	return rest.Reaction(ctx, e, emoji)
+	return rest.Reaction(ctx, e, "❌")
 }
 
 func diagnosticLoop(ctx context.Context, store *Store, rest *RESTClient, hub *WakeHub, g *gatewayState, permissions func() bool) error {

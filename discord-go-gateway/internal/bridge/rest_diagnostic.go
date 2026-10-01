@@ -6,25 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptrace"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
 
 // SendDiagnostic sends an explicitly authorized durable standalone diagnostic.
 // It does not create an inbound event and never retries an attempted message.
-func (r *RESTClient) sendDiagnosticLocked(ctx context.Context, d Diagnostic, guard func() bool) (result SendResult) {
+func (r *RESTClient) sendDiagnosticLocked(ctx context.Context, d Diagnostic, guard func() bool, diag *Diagnostics) (result SendResult) {
 	started := time.Now()
-	diag := Diagnostics{Operation: "diagnostic"}
-	defer func() {
-		diag.Seconds = time.Since(started).Seconds()
-		diag.State = result.State
-		diag.Code = result.Code
-		r.diagMu.Lock()
-		r.diagnostics = diag
-		r.diagMu.Unlock()
-	}()
+	defer func() { r.publishDiagnostics(started, result, diag) }()
 	p := r.settings.Policy
 	if d.ID == "" || d.Index < 0 || d.Index >= 3 || d.Nonce != Nonce(Chunk{ReplyID: d.ID, Index: d.Index}) || d.GuildID == "" || d.OwnerID != p.OwnerID || d.BotID != r.settings.ExpectedBotID || !Snowflake(d.ChannelID) || !utf8.ValidString(d.Text) || trimText(d.Text) == "" || TextUnits(d.Text) > 1900 {
 		return SendResult{State: "failed", Code: "invalid_diagnostic"}
@@ -38,7 +28,7 @@ func (r *RESTClient) sendDiagnosticLocked(ctx context.Context, d Diagnostic, gua
 		source.GuildID = d.GuildID
 	}
 	pre := time.Now()
-	err := r.preflight(ctx, source)
+	err := r.preflightMeasured(ctx, source, diag)
 	diag.PreflightSeconds = time.Since(pre).Seconds()
 	if err != nil {
 		return SendResult{State: "failed", Code: err.Error()}
@@ -53,18 +43,19 @@ func (r *RESTClient) sendDiagnosticLocked(ctx context.Context, d Diagnostic, gua
 	if guard != nil {
 		ctx = context.WithValue(ctx, sendGuardContextKey{}, guard)
 	}
-	var gotConn, reused atomic.Bool
-	trace := &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) { gotConn.Store(true); reused.Store(i.Reused) }}
 	post := time.Now()
-	defer func() { diag.PostSeconds = time.Since(post).Seconds() }()
-	resp, err := r.request(httptrace.WithClientTrace(ctx, trace), http.MethodPost, "/channels/"+d.ChannelID+"/messages", body)
-	diag.PostSeconds = time.Since(post).Seconds()
-	diag.Reused = reused.Load()
+	ctx, measured := newRequestMeasurement(ctx)
+	defer func() {
+		diag.Post = measured.finish()
+		diag.PostSeconds = time.Since(post).Seconds()
+		diag.Reused = diag.Post.Reused
+	}()
+	resp, err := r.request(ctx, http.MethodPost, "/channels/"+d.ChannelID+"/messages", body)
 	if err != nil {
 		if errors.Is(err, errSendGuardChanged) {
 			return SendResult{State: "failed", Code: "connection_changed_before_send"}
 		}
-		if !gotConn.Load() {
+		if measured.failedBeforeConnection() {
 			return SendResult{State: "failed", Code: "connect_failed"}
 		}
 		return SendResult{State: "uncertain", Code: "request_or_ack_failed"}
@@ -101,10 +92,12 @@ func (r *RESTClient) sendDiagnosticLocked(ctx context.Context, d Diagnostic, gua
 
 // SendDiagnosticMeasured snapshots timings while still holding the send lease.
 func (r *RESTClient) SendDiagnosticMeasured(ctx context.Context, d Diagnostic, guard func() bool) (SendResult, Diagnostics) {
+	queued := time.Now()
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
-	result := r.sendDiagnosticLocked(ctx, d, guard)
-	return result, r.Diagnostics()
+	diag := Diagnostics{Operation: "diagnostic", SendLockWaitSeconds: time.Since(queued).Seconds()}
+	result := r.sendDiagnosticLocked(ctx, d, guard, &diag)
+	return result, diag
 }
 func (r *RESTClient) SendDiagnostic(ctx context.Context, d Diagnostic, guard func() bool) SendResult {
 	result, _ := r.SendDiagnosticMeasured(ctx, d, guard)

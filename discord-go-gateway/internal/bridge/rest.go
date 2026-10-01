@@ -33,15 +33,173 @@ type Channel struct {
 	GuildID    string `json:"guild_id"`
 	Recipients []User `json:"recipients"`
 }
-type Diagnostics struct {
-	Operation        string  `json:"operation"`
-	State            string  `json:"state"`
-	Code             string  `json:"code,omitempty"`
-	Seconds          float64 `json:"seconds"`
-	PreflightSeconds float64 `json:"preflight_seconds"`
-	PostSeconds      float64 `json:"post_seconds"`
-	Reused           bool    `json:"reused"`
+
+// RequestDiagnostics is a bounded, content-free value snapshot for one HTTP request.
+// Seconds includes rate-limit waiting and response validation. HeadersSeconds and
+// BodySeconds run from the start of the phase (also including rate-limit waiting)
+// to received headers and body EOF/error/close, respectively. BodyComplete means
+// EOF was observed; a closed or failed body is not assumed to have been consumed.
+// Attempted means http.Client.Do was invoked, not that any bytes were written.
+// Connection/DNS/connect/TLS observations are optional: false means unavailable,
+// not a measured zero. ConnectSeconds spans the first start through the last
+// completed dial, so overlapping connection attempts are not double-counted.
+type RequestDiagnostics struct {
+	Seconds              float64 `json:"seconds"`
+	RateLimitWaitSeconds float64 `json:"rate_limit_wait_seconds"`
+	Attempted            bool    `json:"attempted"`
+	HeadersReceived      bool    `json:"headers_received"`
+	HeadersSeconds       float64 `json:"headers_seconds"`
+	BodyFinished         bool    `json:"body_finished"`
+	BodyComplete         bool    `json:"body_complete"`
+	BodySeconds          float64 `json:"body_seconds"`
+	ConnectionObserved   bool    `json:"connection_observed"`
+	Reused               bool    `json:"reused"`
+	DNSObserved          bool    `json:"dns_observed"`
+	DNSSeconds           float64 `json:"dns_seconds"`
+	ConnectObserved      bool    `json:"connect_observed"`
+	ConnectSeconds       float64 `json:"connect_seconds"`
+	TLSObserved          bool    `json:"tls_observed"`
+	TLSSeconds           float64 `json:"tls_seconds"`
 }
+
+// Diagnostics retains legacy meanings: Seconds excludes send-lock waiting,
+// PreflightSeconds is parallel preflight wall time, PostSeconds includes POST
+// rate waiting and acknowledgement validation, and Reused refers only to POST.
+// Per-request values distinguish a warmed POST from cold preflight connections.
+type Diagnostics struct {
+	Operation           string             `json:"operation"`
+	State               string             `json:"state"`
+	Code                string             `json:"code,omitempty"`
+	Seconds             float64            `json:"seconds"`
+	PreflightSeconds    float64            `json:"preflight_seconds"`
+	PostSeconds         float64            `json:"post_seconds"`
+	Reused              bool               `json:"reused"`
+	SendLockWaitSeconds float64            `json:"send_lock_wait_seconds"`
+	IdentityGET         RequestDiagnostics `json:"identity_get"`
+	ChannelGET          RequestDiagnostics `json:"channel_get"`
+	Post                RequestDiagnostics `json:"post"`
+}
+
+type requestMeasurementKey struct{}
+
+// Trace callbacks may race with response processing or finish after a request.
+// Freeze under the mutex before returning a value; no callbacks can mutate it.
+type requestMeasurement struct {
+	mu                                        sync.Mutex
+	started, dnsStart, connectStart, tlsStart time.Time
+	metrics                                   RequestDiagnostics
+	connectionRequested, frozen               bool
+}
+
+func newRequestMeasurement(ctx context.Context) (context.Context, *requestMeasurement) {
+	m := &requestMeasurement{started: time.Now()}
+	trace := &httptrace.ClientTrace{
+		GetConn: func(string) { m.update(func() { m.connectionRequested = true }) },
+		GotConn: func(i httptrace.GotConnInfo) {
+			m.update(func() { m.metrics.ConnectionObserved = true; m.metrics.Reused = i.Reused })
+		},
+		DNSStart: func(httptrace.DNSStartInfo) {
+			m.update(func() {
+				if m.dnsStart.IsZero() {
+					m.dnsStart = time.Now()
+				}
+			})
+		},
+		DNSDone: func(httptrace.DNSDoneInfo) {
+			m.update(func() {
+				if !m.dnsStart.IsZero() {
+					m.metrics.DNSObserved = true
+					m.metrics.DNSSeconds = time.Since(m.dnsStart).Seconds()
+				}
+			})
+		},
+		ConnectStart: func(string, string) {
+			m.update(func() {
+				if m.connectStart.IsZero() {
+					m.connectStart = time.Now()
+				}
+			})
+		},
+		ConnectDone: func(string, string, error) {
+			m.update(func() {
+				if !m.connectStart.IsZero() {
+					m.metrics.ConnectObserved = true
+					m.metrics.ConnectSeconds = time.Since(m.connectStart).Seconds()
+				}
+			})
+		},
+		TLSHandshakeStart: func() {
+			m.update(func() {
+				if m.tlsStart.IsZero() {
+					m.tlsStart = time.Now()
+				}
+			})
+		},
+		TLSHandshakeDone: func(tls.ConnectionState, error) {
+			m.update(func() {
+				if !m.tlsStart.IsZero() {
+					m.metrics.TLSObserved = true
+					m.metrics.TLSSeconds = time.Since(m.tlsStart).Seconds()
+				}
+			})
+		},
+	}
+	ctx = context.WithValue(ctx, requestMeasurementKey{}, m)
+	return httptrace.WithClientTrace(ctx, trace), m
+}
+func (m *requestMeasurement) update(f func()) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.frozen {
+		f()
+	}
+}
+func (m *requestMeasurement) finish() RequestDiagnostics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.frozen {
+		m.metrics.Seconds = time.Since(m.started).Seconds()
+		m.frozen = true
+	}
+	return m.metrics
+}
+func (m *requestMeasurement) failedBeforeConnection() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Missing trace support after Do is not proof that a POST was unsent.
+	return !m.metrics.Attempted || m.connectionRequested && !m.metrics.ConnectionObserved
+}
+func (m *requestMeasurement) bodyFinished(complete bool) {
+	m.update(func() {
+		if !m.metrics.BodyFinished {
+			m.metrics.BodyFinished = true
+			m.metrics.BodySeconds = time.Since(m.started).Seconds()
+		}
+		m.metrics.BodyComplete = m.metrics.BodyComplete || complete
+	})
+}
+
+type measuredResponseBody struct {
+	io.ReadCloser
+	measurement *requestMeasurement
+}
+
+func (b *measuredResponseBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.measurement.bodyFinished(err == io.EOF)
+	}
+	return n, err
+}
+func (b *measuredResponseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.measurement.bodyFinished(false)
+	return err
+}
+
 type RESTClient struct {
 	settings    Settings
 	client      *http.Client
@@ -106,7 +264,8 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 	if r.closed.Load() {
 		return nil, errors.New("sender_closed")
 	}
-	if err := r.waitLimit(ctx, method, path); err != nil {
+	measurement, _ := ctx.Value(requestMeasurementKey{}).(*requestMeasurement)
+	if err := r.waitLimitMeasured(ctx, method, path, measurement); err != nil {
 		return nil, err
 	}
 	if guard, ok := ctx.Value(sendGuardContextKey{}).(func() bool); ok && !guard() {
@@ -129,8 +288,16 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	measurement.update(func() { measurement.metrics.Attempted = true })
 	resp, err := r.client.Do(req)
 	if resp != nil {
+		measurement.update(func() {
+			measurement.metrics.HeadersReceived = true
+			measurement.metrics.HeadersSeconds = time.Since(measurement.started).Seconds()
+		})
+		if measurement != nil && resp.Body != nil {
+			resp.Body = &measuredResponseBody{ReadCloser: resp.Body, measurement: measurement}
+		}
 		r.observeLimits(resp, method, path)
 	}
 	return resp, err
@@ -225,19 +392,41 @@ func (r *RESTClient) GatewayURL(ctx context.Context) (string, error) {
 	return v.URL, nil
 }
 func (r *RESTClient) preflight(ctx context.Context, s Envelope) error {
+	return r.preflightMeasured(ctx, s, nil)
+}
+func (r *RESTClient) preflightMeasured(ctx context.Context, s Envelope, diagnostics *Diagnostics) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var identityErr, channelErr error
-	go func() { defer wg.Done(); _, identityErr = r.Identity(ctx) }()
+	var identityMetrics, channelMetrics RequestDiagnostics
 	go func() {
 		defer wg.Done()
-		c, e := r.Channel(ctx, s.ConversationID)
+		identityCtx, measured := newRequestMeasurement(ctx)
+		_, identityErr = r.Identity(identityCtx)
+		// A failed identity check definitively forbids POST. Cancel only the
+		// sibling work, then join it and retain the original identity error.
+		if identityErr != nil {
+			cancel()
+		}
+		identityMetrics = measured.finish()
+	}()
+	go func() {
+		defer wg.Done()
+		channelCtx, measured := newRequestMeasurement(ctx)
+		c, e := r.Channel(channelCtx, s.ConversationID)
 		if e == nil {
 			e = r.ValidateChannel(c, s)
 		}
 		channelErr = e
+		channelMetrics = measured.finish()
 	}()
 	wg.Wait()
+	if diagnostics != nil {
+		diagnostics.IdentityGET = identityMetrics
+		diagnostics.ChannelGET = channelMetrics
+	}
 	if identityErr != nil {
 		return identityErr
 	}
@@ -254,24 +443,38 @@ func payload(c Chunk) []byte {
 func (r *RESTClient) Send(ctx context.Context, c Chunk) SendResult { return r.SendGuarded(ctx, c, nil) }
 
 // SendGuarded attempts at most one message POST. No caller may retry uncertain results.
-func (r *RESTClient) SendGuarded(ctx context.Context, c Chunk, guard func() bool) (result SendResult) {
+func (r *RESTClient) SendGuarded(ctx context.Context, c Chunk, guard func() bool) SendResult {
+	result, _ := r.SendGuardedMeasured(ctx, c, guard)
+	return result
+}
+
+// SendGuardedMeasured returns this send's immutable measurement while holding
+// the send lease. Callers must persist this value with its result, never read
+// Diagnostics later to associate the mutable latest-send snapshot with a reply.
+func (r *RESTClient) SendGuardedMeasured(ctx context.Context, c Chunk, guard func() bool) (SendResult, Diagnostics) {
+	queued := time.Now()
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
+	d := Diagnostics{Operation: "send", SendLockWaitSeconds: time.Since(queued).Seconds()}
+	result := r.sendGuardedLocked(ctx, c, guard, &d)
+	return result, d
+}
+func (r *RESTClient) publishDiagnostics(started time.Time, result SendResult, d *Diagnostics) {
+	d.Seconds = time.Since(started).Seconds()
+	d.State = result.State
+	d.Code = result.Code
+	r.diagMu.Lock()
+	r.diagnostics = *d
+	r.diagMu.Unlock()
+}
+func (r *RESTClient) sendGuardedLocked(ctx context.Context, c Chunk, guard func() bool, d *Diagnostics) (result SendResult) {
 	started := time.Now()
-	d := Diagnostics{Operation: "send"}
-	defer func() {
-		d.Seconds = time.Since(started).Seconds()
-		d.State = result.State
-		d.Code = result.Code
-		r.diagMu.Lock()
-		r.diagnostics = d
-		r.diagMu.Unlock()
-	}()
+	defer func() { r.publishDiagnostics(started, result, d) }()
 	if !r.settings.Policy.Allows(c.Source) || c.ReplyID == "" || c.Index < 0 || !utf8.ValidString(c.Text) || trimText(c.Text) == "" || TextUnits(c.Text) > 1900 {
 		return SendResult{State: "failed", Code: "invalid_route_or_chunk"}
 	}
 	pre := time.Now()
-	e := r.preflight(ctx, c.Source)
+	e := r.preflightMeasured(ctx, c.Source, d)
 	d.PreflightSeconds = time.Since(pre).Seconds()
 	if e != nil {
 		return SendResult{State: "failed", Code: e.Error()}
@@ -282,22 +485,22 @@ func (r *RESTClient) SendGuarded(ctx context.Context, c Chunk, guard func() bool
 	if guard != nil && !guard() {
 		return SendResult{State: "failed", Code: "connection_changed_before_send"}
 	}
-	var gotConn atomic.Bool
-	var reused atomic.Bool
-	trace := &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) { gotConn.Store(true); reused.Store(i.Reused) }}
 	if guard != nil {
 		ctx = context.WithValue(ctx, sendGuardContextKey{}, guard)
 	}
 	post := time.Now()
-	defer func() { d.PostSeconds = time.Since(post).Seconds() }()
-	resp, e := r.request(httptrace.WithClientTrace(ctx, trace), http.MethodPost, "/channels/"+c.Source.ConversationID+"/messages", payload(c))
-	d.PostSeconds = time.Since(post).Seconds()
-	d.Reused = reused.Load()
+	ctx, measured := newRequestMeasurement(ctx)
+	defer func() {
+		d.Post = measured.finish()
+		d.PostSeconds = time.Since(post).Seconds()
+		d.Reused = d.Post.Reused
+	}()
+	resp, e := r.request(ctx, http.MethodPost, "/channels/"+c.Source.ConversationID+"/messages", payload(c))
 	if e != nil {
 		if errors.Is(e, errSendGuardChanged) {
 			return SendResult{State: "failed", Code: "connection_changed_before_send"}
 		}
-		if !gotConn.Load() {
+		if measured.failedBeforeConnection() {
 			return SendResult{State: "failed", Code: "connect_failed"}
 		}
 		return SendResult{State: "uncertain", Code: "request_or_ack_failed"}
@@ -449,6 +652,9 @@ func durationSeconds(raw string) time.Duration {
 	return time.Duration(v * float64(time.Second))
 }
 func (r *RESTClient) waitLimit(ctx context.Context, method, path string) error {
+	return r.waitLimitMeasured(ctx, method, path, nil)
+}
+func (r *RESTClient) waitLimitMeasured(ctx context.Context, method, path string, measurement *requestMeasurement) error {
 	route, _ := limitRoute(method, path)
 	for {
 		r.limitMu.Lock()
@@ -466,12 +672,18 @@ func (r *RESTClient) waitLimit(ctx context.Context, method, path string) error {
 		if wait <= 0 {
 			return nil
 		}
+		started := time.Now()
 		timer := time.NewTimer(wait)
+		var err error
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return errors.New("rate_limit_wait_cancelled")
+			err = errors.New("rate_limit_wait_cancelled")
 		case <-timer.C:
+		}
+		measurement.update(func() { measurement.metrics.RateLimitWaitSeconds += time.Since(started).Seconds() })
+		if err != nil {
+			return err
 		}
 	}
 }

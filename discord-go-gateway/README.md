@@ -62,9 +62,10 @@ this integration, and no reboot auto-start guarantee.
   client sends each message POST once, with no redirects or replayable body.
   Known bucket/global limits pace *future* requests; a 429 is not automatically
   resent. Lost/ambiguous acknowledgements are held as `uncertain` for review.
-- Receipt 👀, lease-bound eight-second typing refresh, completion ✅ and failure
-  ❌ are real lifecycle feedback. Disconnect, expiry, reply and shutdown cancel
-  typing. Symbolic errors avoid logging bodies, credentials or message content.
+- Receipt 👀, lease-bound eight-second typing refresh and failure ❌ are real
+  lifecycle feedback. Successful delivery clears 👀 without adding a checkmark
+  reaction; the reply itself is completion feedback. Disconnect, expiry, reply and
+  shutdown cancel typing. Symbolic errors avoid logging bodies, credentials or message content.
 - A bounded 2,048-row content-free timing ledger records lifecycle stages using
   stable persisted timestamps. It distinguishes consumer/model wait from network
   delivery; changing language cannot remove the external reasoning/tool boundary.
@@ -143,3 +144,10 @@ The adjacent `hermes-dot-gateway` and its full pinned MIT Hermes source remain
 reference/provenance. Receipt/processing/completion behavior follows the narrow
 Hermes lifecycle hooks; unrelated model, voice, command and profile code is not
 included. See `THIRD_PARTY_NOTICES.md`.
+
+## Bounded latency improvements
+
+See [LATENCY_IMPROVEMENTS.md](LATENCY_IMPROVEMENTS.md) for claim paging, combined
+file/socket wakeups, opt-in content-free CLI phase traces, immutable per-send
+metrics, synthetic benchmarks, and measurement limitations. No model/provider
+or live runtime change is implied by these source improvements.

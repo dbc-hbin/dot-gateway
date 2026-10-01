@@ -14,15 +14,16 @@ host infrastructure process is Go.
    native-host credential-free proxy configuration, not the exec environment's
    proxy. Do not read or copy the token. No permissions or auth grants change.
 5. Start exactly one child. Existing tables are adopted in an immediate
-   transaction; additive tables/indexes include timing, consumer observations and
-   the private `ingress_validation` quarantine. Historical terminal
+   transaction; additive tables/indexes include timing, consumer observations,
+   per-attempt `send_measurements`, and the private `ingress_validation` quarantine. Historical terminal
    feedback is marked `history` only when upgrading a DB without feedback.
 6. Startup recovers previously `sending` ordinary/diagnostic records as
    `uncertain`; these must never be blind-resubmitted. Check content-free status,
    pinned identity/permissions, heartbeat and actual supervisor child lifetime.
 7. Switch consumer wrapper to the Go CLI only after ready. Verify an ordinary
    real inbound can be claimed, processing typing starts, authored text is
-   queued, private file wake dispatches it, ACK is persisted and ✅ appears.
+   queued, private file wake dispatches it, ACK is persisted and 👀 is removed
+   without adding a completion checkmark reaction.
 8. Only after reviewed authorization, queue diagnostic slots one at a time.
    Observe each terminal result; uncertain means stop/review, not rerun.
 

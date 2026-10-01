@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS consumer_claims(consumer TEXT PRIMARY KEY,inbound_id 
 CREATE TABLE IF NOT EXISTS feedback(inbound_id TEXT PRIMARY KEY REFERENCES inbound(id),stage TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runtime(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS timings(id INTEGER PRIMARY KEY AUTOINCREMENT,inbound_id TEXT,stage TEXT NOT NULL,at REAL NOT NULL,duration_ms REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS send_measurements(id INTEGER PRIMARY KEY AUTOINCREMENT,reply_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,attempt INTEGER NOT NULL,at REAL NOT NULL,measurement TEXT NOT NULL,UNIQUE(reply_id,chunk_index,attempt));
 CREATE INDEX IF NOT EXISTS inbound_claim_order ON inbound(state,created,id);
 CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 `)
@@ -299,7 +300,7 @@ func (s *Store) Ingest(e Envelope) (string, error) {
 
 type inboundRow struct {
 	id, state, claim string
-	lease            float64
+	lease, created   float64
 	event            Envelope
 }
 
@@ -327,6 +328,44 @@ func readInbound(db *storeConn, query string, args ...any) ([]inboundRow, error)
 	}
 	return out, rows.Err()
 }
+
+// Bound envelope materialization independently of the queue capacity. Candidate
+// selection reads only metadata, so SQLite never sorts the entire payload backlog.
+const pendingClaimPageSize = 16
+
+func readPendingClaimPage(db *storeConn, now float64, after *inboundRow) ([]inboundRow, error) {
+	query := `WITH candidates AS MATERIALIZED (
+		SELECT id,created FROM inbound
+		WHERE (state='pending' OR (state='claimed' AND lease_until<=?))`
+	args := []any{now}
+	if after != nil {
+		query += ` AND (created,id)>(?,?)`
+		args = append(args, after.created, after.id)
+	}
+	query += ` ORDER BY created,id LIMIT ?)
+		SELECT i.id,c.created,i.envelope FROM candidates c JOIN inbound i ON i.id=c.id
+		ORDER BY c.created,c.id`
+	args = append(args, pendingClaimPageSize)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]inboundRow, 0, pendingClaimPageSize)
+	for rows.Next() {
+		var r inboundRow
+		var raw string
+		if err := rows.Scan(&r.id, &r.created, &raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(raw), &r.event); err != nil {
+			return nil, errors.New("invalid stored envelope")
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ClaimNext(leaseSeconds, beginSeconds int) (*Claim, error) {
 	return s.ClaimNextForConsumer(leaseSeconds, beginSeconds, "")
 }
@@ -373,57 +412,66 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					return nil, err
 				}
 			}
-			rows, err := readInbound(db, "SELECT id,state,claim,lease_until,envelope FROM inbound WHERE state='pending' OR (state='claimed' AND lease_until<=?) ORDER BY created,id", now)
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range rows {
-				if !s.policy.Accepts(r.event) {
-					if _, err = db.Exec("UPDATE inbound SET state='blocked',claim=NULL WHERE id=?", r.id); err != nil {
-						return nil, err
-					}
-					continue
-				}
-				var busy int
-				if err = db.QueryRow("SELECT count(*) FROM inbound WHERE state='claimed' AND lease_until>? AND id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?", now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
-					return nil, err
-				}
-				if busy > 0 {
-					continue
-				}
-				cl, err := uuidHex()
+			var after *inboundRow
+			for {
+				rows, err := readPendingClaimPage(db, now, after)
 				if err != nil {
 					return nil, err
 				}
-				until := now + float64(leaseSeconds)
-				if _, err = db.Exec("UPDATE inbound SET state='claimed',claim=?,lease_until=? WHERE id=?", cl, until, r.id); err != nil {
-					return nil, err
+				if len(rows) == 0 {
+					break
 				}
-				if _, err = db.Exec("DELETE FROM consumer_claims WHERE inbound_id=?", r.id); err != nil {
-					return nil, err
-				}
-				if consumer != "" {
-					if _, err = db.Exec("INSERT INTO consumer_claims(consumer,inbound_id,claim) VALUES(?,?,?)", consumer, r.id, cl); err != nil {
+				for _, r := range rows {
+					if !s.policy.Accepts(r.event) {
+						if _, err = db.Exec("UPDATE inbound SET state='blocked',claim=NULL WHERE id=?", r.id); err != nil {
+							return nil, err
+						}
+						continue
+					}
+					var busy int
+					if err = db.QueryRow("SELECT count(*) FROM inbound WHERE state='claimed' AND lease_until>? AND id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?", now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
 						return nil, err
 					}
-				}
-				if beginSeconds > 0 {
-					sec := beginSeconds
-					if sec > leaseSeconds {
-						sec = leaseSeconds
+					if busy > 0 {
+						continue
 					}
-					if _, err = db.Exec("INSERT INTO processing VALUES(?,?,?) ON CONFLICT(inbound_id) DO UPDATE SET claim=excluded.claim,until=excluded.until", r.id, cl, now+float64(sec)); err != nil {
+					cl, err := uuidHex()
+					if err != nil {
 						return nil, err
 					}
+					until := now + float64(leaseSeconds)
+					if _, err = db.Exec("UPDATE inbound SET state='claimed',claim=?,lease_until=? WHERE id=?", cl, until, r.id); err != nil {
+						return nil, err
+					}
+					if _, err = db.Exec("DELETE FROM consumer_claims WHERE inbound_id=?", r.id); err != nil {
+						return nil, err
+					}
+					if consumer != "" {
+						if _, err = db.Exec("INSERT INTO consumer_claims(consumer,inbound_id,claim) VALUES(?,?,?)", consumer, r.id, cl); err != nil {
+							return nil, err
+						}
+					}
+					if beginSeconds > 0 {
+						sec := beginSeconds
+						if sec > leaseSeconds {
+							sec = leaseSeconds
+						}
+						if _, err = db.Exec("INSERT INTO processing VALUES(?,?,?) ON CONFLICT(inbound_id) DO UPDATE SET claim=excluded.claim,until=excluded.until", r.id, cl, now+float64(sec)); err != nil {
+							return nil, err
+						}
+					}
+					if err = insertTiming(db, r.id, "claimed", now, now-r.created); err != nil {
+						return nil, err
+					}
+					return &Claim{r.id, cl, until, "untrusted_message_text", r.event}, nil
 				}
-				var created float64
-				if err = db.QueryRow("SELECT created FROM inbound WHERE id=?", r.id).Scan(&created); err != nil {
-					return nil, err
+				// Advance by immutable ordering keys, not OFFSET: revoked candidates
+				// may have been removed from the eligible set while scanning this page.
+				if len(rows) < pendingClaimPageSize {
+					break
 				}
-				if err = insertTiming(db, r.id, "claimed", now, now-created); err != nil {
-					return nil, err
-				}
-				return &Claim{r.id, cl, until, "untrusted_message_text", r.event}, nil
+				last := rows[len(rows)-1]
+				after = &inboundRow{id: last.id, created: last.created}
 			}
 			return (*Claim)(nil), nil
 		})
@@ -635,6 +683,9 @@ func nullable(v string) any {
 	return v
 }
 func (s *Store) RecordResult(c Chunk, r SendResult) error {
+	return s.recordResult(c, r, nil)
+}
+func (s *Store) recordResult(c Chunk, r SendResult, measurement *SendMeasurement) error {
 	if (r.State != "sent" && r.State != "failed" && r.State != "uncertain") || (r.State == "sent" && r.MessageID == "") {
 		return errors.New("invalid delivery result")
 	}
@@ -663,6 +714,7 @@ func (s *Store) RecordResult(c Chunk, r SendResult) error {
 			if d.State == "sent" {
 				err = insertTiming(db, id, "end_to_end", now, now-created)
 			}
+			if err == nil { insertSendMeasurement(db, c, measurement) }
 			return nil, err
 		})
 	})
