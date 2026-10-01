@@ -362,3 +362,19 @@ func TestConfiguredSourceAndPositiveActivation(t *testing.T) {
 		t.Fatal("missing bridge DB activated")
 	}
 }
+func TestReportSnapshotRequiresPinnedTarget(t *testing.T) {
+	dir := privateTemp(t)
+	s := stateFixture()
+	s.Reports = nil
+	if e := snapshotReports(dir, &s); e == nil {
+		t.Fatal("wrong parent accepted as empty outbox")
+	}
+	put(t, filepath.Join(dir, "target.json"), jsonBytes(Target{s.Operation.BotID, s.Operation.GuildID, s.Operation.ReportChannelID}))
+	if e := snapshotReports(dir, &s); e != nil {
+		t.Fatal(e)
+	}
+	put(t, filepath.Join(dir, "target.json"), jsonBytes(Target{"1002", "1003", "9999"}))
+	if e := snapshotReports(dir, &s); e == nil {
+		t.Fatal("wrong pinned target accepted")
+	}
+}

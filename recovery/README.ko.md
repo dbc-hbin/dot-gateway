@@ -56,13 +56,15 @@ CGO_ENABLED=0 "$GO_BIN" build -mod=readonly -trimpath -o "$HOME/dot-recovery-saf
 ```sh
 dot-recovery snapshot \
   --db /absolute/live-private/bridge.sqlite3 \
-  --reports /absolute/report-state \
+  --reports /absolute/report-state/outbox \
   --operation /absolute/private/operation.json \
   --manifest-sha "$TRUSTED_MANIFEST_SHA" \
   --output /absolute/private/snapshot.json
 ```
 
 DB는 읽기 전용 SQLite 트랜잭션으로 선택한 메타데이터 컬럼만 읽습니다. 본 DB만 복사하지 않으므로 WAL 데이터의 불완전 복사 문제를 피합니다. 원문 envelope/text/content, runtime 값, claim, provider key는 조회하지 않습니다. DB/sidecar는 소유자·개인 권한·일반 파일·단일 링크 조건을 검사합니다. 부모 디렉터리 FD를 유지해 경로를 고정합니다. 같은 UID 전체가 이미 침해된 환경에 대한 보안 경계는 아닙니다.
+
+보고서 경로는 target.json과 run-*.json이 직접 들어 있는 outbox 디렉터리여야 합니다. target.json의 승인 대상과 운영 설정이 다르면 중단합니다.
 
 동시에 실행되는 발행기의 run 파일은 원자적으로 교체되는 단위로 읽습니다. 스냅샷 직후의 새 전송은 이 스냅샷에 없습니다. 따라서 마지막 스냅샷 이후 전송 내역을 확인하기 전에는 복구 서비스를 활성화하지 않습니다. 운영 중 반복 백업·외부 업로드는 별도로 승인된 실행 경로가 필요합니다.
 

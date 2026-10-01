@@ -286,6 +286,14 @@ func snapshotReports(dir string, s *Snapshot) error {
 		return e
 	}
 	defer r.Close()
+	targetBytes, e := readRegular(r, "target.json", true, 16<<10)
+	if e != nil {
+		return errors.New("report directory must contain private pinned target.json")
+	}
+	var target Target
+	if strict(targetBytes, &target) != nil || !targetOK(target) || target != (Target{s.Operation.BotID, s.Operation.GuildID, s.Operation.ReportChannelID}) {
+		return errors.New("report directory target binding mismatch")
+	}
 	entries, e := d.ReadDir(-1)
 	if e != nil {
 		return e

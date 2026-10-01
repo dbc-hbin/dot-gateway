@@ -1023,8 +1023,8 @@
     },
     {
       "path": "recovery/README.ko.md",
-      "bytes": 16163,
-      "sha256": "310c6d7d1402da3f6c8d37b844acd72c05567dad6acd7209989ff0c575b6ed65"
+      "bytes": 16354,
+      "sha256": "4ccc5526b6fd422c7d45184c56d3d893ce6f6902b2f79eb415400b31fa6c745e"
     },
     {
       "path": "recovery/TOOLCHAIN.lock.json",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "recovery/recovery_test.go",
-      "bytes": 12690,
-      "sha256": "46bfb3accf688d7b1834f0719c42c649715604e6abda0856fea36c9b1257b9aa"
+      "bytes": 13283,
+      "sha256": "0bd3e2826fd2a099f3a9e0d207385b2bf2d57955fd53787ba0b6e7ba1d8d1a14"
     },
     {
       "path": "recovery/source.go",
@@ -1083,8 +1083,8 @@
     },
     {
       "path": "recovery/state.go",
-      "bytes": 19265,
-      "sha256": "15b08523d2a7fbd4c4013438447bb1592c9c81bca82bc8c59a8c94e0d1c12072"
+      "bytes": 19666,
+      "sha256": "b12f999e45500dde6f06461f2b3271286674a4c0a5691a12aaa2e2151442b527"
     },
     {
       "path": "recovery/templates/ACTIVATION.example.json",
