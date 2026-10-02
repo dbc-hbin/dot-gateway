@@ -251,6 +251,7 @@ func initializeStore(db *storeConn) error {
 CREATE TABLE IF NOT EXISTS inbound(id TEXT PRIMARY KEY,platform TEXT NOT NULL,event_id TEXT NOT NULL,envelope TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',claim TEXT,lease_until REAL,created REAL NOT NULL,UNIQUE(platform,event_id));
 CREATE TABLE IF NOT EXISTS replies(id TEXT PRIMARY KEY,inbound_id TEXT NOT NULL UNIQUE REFERENCES inbound(id),text TEXT NOT NULL,created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS chunks(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',message_id TEXT,code TEXT,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(reply_id,idx));
+CREATE TABLE IF NOT EXISTS reply_followups(reply_id TEXT NOT NULL REFERENCES replies(id),key TEXT NOT NULL,text TEXT NOT NULL,start_idx INTEGER NOT NULL,chunk_count INTEGER NOT NULL,PRIMARY KEY(reply_id,key));
 CREATE TABLE IF NOT EXISTS reply_output_receipts(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,receipt TEXT NOT NULL,PRIMARY KEY(reply_id,idx));
 CREATE TABLE IF NOT EXISTS reply_outputs(reply_id TEXT PRIMARY KEY REFERENCES replies(id),payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reply_cancellations(reply_id TEXT PRIMARY KEY REFERENCES replies(id),cancelled_at REAL NOT NULL,code TEXT NOT NULL);

@@ -2,6 +2,19 @@
 
 The complete staged VM-reset path is in [recovery/VM_RESET_RUNBOOK.ko.md](recovery/VM_RESET_RUNBOOK.ko.md): pinned source/state recovery, separately authorized opaque token-file installation, receive-only bootstrap, native host-lifetime launch, single-consumer activation and no-replay checks. A fresh source commit does not silently rebind older private snapshots. Keep each pinned source/snapshot pair and any reviewed private upgrade overlay together.
 
+## Normal gateway startup
+
+Normal `activation-env --component gateway` validates an existing private bridge
+DB/schema, secure token-file metadata, and explicit credential-free proxy. It no
+longer requires activation attestations, a reviewed binary hash, consumer/history
+paperwork, or clearing `RECOVERY_BLOCK.json`. Gateway transport still validates
+expected bot identity and exact configured routes. Startup does not create a new
+DB or alter historical blocked events, receipts, or disarmed catch-up state.
+
+The separately requested `gateway-receive-only` and `headed` modes retain their
+staged recovery gates. The staged runbook describes those stricter workflows;
+its activation requirements do not apply to normal gateway startup.
+
 ## What can be recovered
 
 This tree can rebuild source binaries after official tools/dependencies are installed. Go modules are pinned with `go.mod`/`go.sum`; Playwright 1.63.0 is pinned with its npm lockfile. The recorded build toolchain was Go 1.27.1, Node 24.19.0, npm 11.9.0 and Python 3.12.14. A real headed Linux Chromium 151.0.7922.173 was used previously. Toolchain/browser binaries and package caches are not in Git.

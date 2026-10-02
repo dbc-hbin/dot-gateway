@@ -136,6 +136,8 @@ Go module/go.sum 및 npm lockfile의 정확한 버전을 사용합니다. `npm c
 
 ## 6. 활성화 전 점검 및 보안 경계
 
+일반 `activation-env --component gateway`는 기존 비공개 DB/schema, 토큰 파일의 안전한 메타데이터, 명시적 프록시를 확인합니다. 수동 ACTIVATION 기록·바이너리 해시 승인·소비자/이력 확인 서류를 요구하지 않으며 RECOVERY_BLOCK을 지우지 않습니다. 봇 신원과 정확한 대상 범위는 게이트웨이가 검증합니다. 과거 blocked 이벤트·전송 영수증·비활성 catch-up은 변경하지 않습니다. 아래의 수동 활성화 및 해시 연결 요구는 `headed`와 별도 `gateway-receive-only` 경로에 적용됩니다.
+
 복구 도구는 비밀을 생성·이동·읽지 않습니다. 사용자가 승인된 보안 절차로 `restored-state/secrets/`(0700)에 bot-token(0600)을 직접 복원해야 합니다. 새로운 OAuth/토큰/영구 접근·부팅 설정은 별도 행위 시 승인이 필요합니다. GitHub 토큰은 소스 읽기와 이 복구 도구 실행에 필요 없습니다. 프록시는 승인된 비밀 없는 설정만 `restored-state/proxy.json`에 둡니다. URL에 사용자명/비밀번호를 넣지 않습니다.
 
 ```sh

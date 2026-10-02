@@ -64,11 +64,11 @@ func TestReceiveOnlyBootstrapIsSeparateFromActivation(t *testing.T) {
 	if err != nil || !strings.Contains(env, "export BRIDGE_RECEIVE_ONLY='true'\n") || !strings.Contains(env, "export BRIDGE_KEEP_CATCHUP_DISARMED='true'\n") {
 		t.Fatalf("bootstrap gate: env=%q error=%v", env, err)
 	}
-	// Even an independently complete marker cannot bypass the recovery block.
+	// Headed launch still requires completed recovery; normal gateway uses runtime inputs.
 	full := a
 	full.ConsumerVerified = true
 	put(t, filepath.Join(root, "ACTIVATION.json"), jsonBytes(full))
-	for _, component := range []string{"gateway", "headed"} {
+	for _, component := range []string{"headed"} {
 		if _, err := activationEnvironment(root, source, a.SnapshotSHA, snapshot.ManifestSHA, component); err == nil {
 			t.Fatalf("bootstrap satisfied normal %s activation", component)
 		}
@@ -175,7 +175,7 @@ func TestReceiveOnlyBootstrapRequiresDisarmedCatchup(t *testing.T) {
 }
 
 func TestActivationRequiresSnapshotBoundOperation(t *testing.T) {
-	for _, component := range []string{"gateway", "headed", "gateway-receive-only"} {
+	for _, component := range []string{"headed", "gateway-receive-only"} {
 		for _, mutation := range []string{"missing", "malformed", "owner", "bot", "guild", "gateway_channel", "report_channel", "mode", "intent"} {
 			t.Run(component+"/"+mutation, func(t *testing.T) {
 				root, source, snapshot, a := activationFixture(t, component == "gateway-receive-only")

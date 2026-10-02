@@ -80,7 +80,7 @@ func run(args []string) int {
 		output(map[string]string{"error": e.Error()})
 		return 2
 	}
-	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "followup": "claim key text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
 	allowed["read-message"] = ""
 	allowed["read-history"] = "before limit"
 	allowed["read-pins"] = "before limit"
@@ -124,7 +124,7 @@ func run(args []string) int {
 		expected = 2
 	case "read-history", "read-pins", "search-messages":
 		expected = 1
-	case "message-operation", "message-operation-status", "abandon-message-operation", "reconcile-message-operation", "reply", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply", "memory-search", "memory-put", "memory-get", "memory-forget", "memory-export", "memory-import":
+	case "message-operation", "message-operation-status", "abandon-message-operation", "reconcile-message-operation", "reply", "followup", "renew", "begin", "ignore", "delivery", "retry-failed", "cancel-reply", "resolve-sent", "materialize", "bind-response", "verify-reply", "reconcile-reply", "memory-search", "memory-put", "memory-get", "memory-forget", "memory-export", "memory-import":
 		expected = 1
 	}
 	if len(pos) != expected {
@@ -198,7 +198,7 @@ func run(args []string) int {
 		return d, nil
 	}
 	claim := f["claim"]
-	if (cmd == "abandon-message-operation" || cmd == "message-operation" || cmd == "reconcile-message-operation" || cmd == "reply" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response" || cmd == "memory-search" || cmd == "memory-put" || cmd == "memory-get" || cmd == "memory-forget") && claim == "" {
+	if (cmd == "abandon-message-operation" || cmd == "message-operation" || cmd == "reconcile-message-operation" || cmd == "reply" || cmd == "followup" || cmd == "renew" || cmd == "begin" || cmd == "ignore" || cmd == "materialize" || cmd == "bind-response" || cmd == "memory-search" || cmd == "memory-put" || cmd == "memory-get" || cmd == "memory-forget") && claim == "" {
 		output(map[string]string{"error": "claim_required"})
 		return 2
 	}
@@ -541,7 +541,7 @@ func run(args []string) int {
 		var dir string
 		dir, e = store.ReplyOutputDir()
 		result = map[string]string{"directory": dir}
-	case "reply":
+	case "reply", "followup":
 		if _, manifest := f["manifest-file"]; manifest {
 			if _, text := f["text-file"]; text {
 				e = errors.New("reply_input_conflict")
@@ -587,7 +587,9 @@ func run(args []string) int {
 		}
 		var id string
 		trace.mark("queue_call_started")
-		if manifest {
+		if cmd == "followup" {
+			id, e = store.QueueFollowup(pos[0], claim, f["key"], string(data))
+		} else if manifest {
 			id, e = store.QueueReplyManifest(pos[0], claim, data)
 		} else {
 			id, e = store.QueueReply(pos[0], claim, string(data))

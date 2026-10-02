@@ -54,11 +54,15 @@ func configureSource(s Source, state Snapshot, dest, stateRoot, snapshotSHA stri
 			return e
 		}
 		derived["insane-search-migration/config/discord-report.json"] = jsonBytes(Target{o.BotID, o.GuildID, o.ReportChannelID})
-		// Launch scripts refuse to start while recovery is blocked. They are generated
+		// Gateway launch validates runtime inputs; headed launch retains recovery gates.
+		// Launchers are generated
 		// as mode 0600 text; explicit bash invocation works after authorized review.
 		gatewayEnv := map[string]string{"DISCORD_OWNER_ID": o.OwnerID, "DISCORD_ALLOWED_DM_IDS": o.OwnerID, "DISCORD_EXPECTED_BOT_ID": o.BotID, "DISCORD_GUILD_ID": o.GuildID, "DISCORD_GUILD_CHANNEL_ID": o.GatewayChannelID, "DISCORD_GUILD_MODE": o.GuildMode, "DISCORD_ENABLE_MESSAGE_CONTENT": strconv.FormatBool(o.MessageContent), "BRIDGE_DB": rootJoin(stateRoot, "bridge/bridge.sqlite3"), "DISCORD_BOT_TOKEN_FILE": rootJoin(stateRoot, "secrets/bot-token")}
 		// Do not use eval directly on a failing substitution: capture first so set -e fails closed.
 		check := func(component string) string {
+			if component == "gateway" {
+				return "RECOVERY_ENV=$(" + shQuote(rootJoin(dest, "recovery/dot-recovery")) + " activation-env --state-root " + shQuote(stateRoot) + " --component gateway)\n" + "eval \"$RECOVERY_ENV\"\n"
+			}
 			return "RECOVERY_ENV=$(" + shQuote(rootJoin(dest, "recovery/dot-recovery")) + " activation-env --state-root " + shQuote(stateRoot) + " --source " + shQuote(dest) + " --snapshot-sha " + shQuote(snapshotSHA) + " --manifest-sha " + shQuote(state.ManifestSHA) + " --component " + component + ")\n" + "eval \"$RECOVERY_ENV\"\n"
 		}
 		script := "#!/bin/sh\nset -eu\n" + check("gateway")

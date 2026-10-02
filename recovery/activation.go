@@ -48,6 +48,11 @@ type receiveOnlyRecoveryBlock struct {
 }
 
 func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, component string) (string, error) {
+	// Normal gateway startup validates runtime inputs, not manual attestations.
+	// The transport still checks expected identity and exact configured routes.
+	if component == "gateway" {
+		return gatewayRuntimeEnvironment(stateRoot)
+	}
 	bootstrap := component == "gateway-receive-only"
 	if component != "gateway" && component != "headed" && !bootstrap {
 		return "", errors.New("component must be gateway, gateway-receive-only or headed")
@@ -185,10 +190,34 @@ func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, comp
 	if e != nil || digest(broker) != a.BrokerSHA {
 		return "", errors.New("reviewed broker script hash mismatch")
 	}
+	env, e := runtimeEnvironment(stateRoot)
+	if e != nil {
+		return "", e
+	}
+	if bootstrap {
+		env += "export BRIDGE_RECEIVE_ONLY='true'\nexport BRIDGE_KEEP_CATCHUP_DISARMED='true'\n"
+	}
+	return env, nil
+}
+
+func gatewayRuntimeEnvironment(stateRoot string) (string, error) {
+	db, err := dbRO(filepath.Join(stateRoot, "bridge/bridge.sqlite3"))
+	if err != nil {
+		return "", errors.New("existing private bridge database required")
+	}
+	defer db.Close()
+	var n int
+	if err = db.QueryRow("SELECT count(*) FROM inbound").Scan(&n); err != nil {
+		return "", errors.New("existing bridge schema required")
+	}
+	return runtimeEnvironment(stateRoot)
+}
+
+func runtimeEnvironment(stateRoot string) (string, error) {
 	if credentialStatus(filepath.Join(stateRoot, "secrets/bot-token")) != "present_metadata_only" {
 		return "", errors.New("credential missing or insecure")
 	}
-	b, e = readFile(filepath.Join(stateRoot, "proxy.json"), true, 16<<10)
+	b, e := readFile(filepath.Join(stateRoot, "proxy.json"), true, 16<<10)
 	if e != nil {
 		return "", errors.New("explicit private proxy config required")
 	}
@@ -241,9 +270,6 @@ func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, comp
 		env += "export https_proxy=" + shQuote(p.URL) + "\n"
 	}
 	env += "export BRIDGE_NO_PROXY=" + shQuote(p.NoProxy) + "\nexport no_proxy=" + shQuote(p.NoProxy) + "\n"
-	if bootstrap {
-		env += "export BRIDGE_RECEIVE_ONLY='true'\nexport BRIDGE_KEEP_CATCHUP_DISARMED='true'\n"
-	}
 	return env, nil
 }
 func printActivationEnv(root, source, snapshot, manifest, component string) error {

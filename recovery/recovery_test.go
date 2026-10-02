@@ -358,6 +358,25 @@ func TestConfiguredSourceAndPositiveActivation(t *testing.T) {
 	if !strings.Contains(env, "unset DISCORD_BOT_TOKEN") || !strings.Contains(env, "export BRIDGE_HTTPS_PROXY='http://proxy.invalid:8080'") {
 		t.Fatal("explicit credential/proxy environment not applied")
 	}
+
+	// Gateway startup uses actual runtime configuration, not recovery attestations.
+	os.Remove(filepath.Join(root, "ACTIVATION.json"))
+	writeFile(root, "RECOVERY_BLOCK.json", []byte("{}"))
+	if _, e = activationEnvironment(root, dest, "", "", "gateway"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = activationEnvironment(root, dest, sp, state.ManifestSHA, "headed"); e == nil {
+		t.Fatal("unrelated headed gate changed")
+	}
+	var blocked int
+	db, e := dbRO(filepath.Join(root, "bridge/bridge.sqlite3"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = db.QueryRow("SELECT count(*) FROM inbound WHERE state='blocked'").Scan(&blocked); e != nil || blocked != len(state.Events)+len(state.Ingress) {
+		t.Fatal("historical event fences changed")
+	}
+	db.Close()
 	os.Remove(filepath.Join(root, "bridge/bridge.sqlite3"))
 	if _, e = activationEnvironment(root, dest, sp, state.ManifestSHA, "gateway"); e == nil {
 		t.Fatal("missing bridge DB activated")
