@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "snapshot_sha256": "REPLACE_WITH_VERIFIED_PRIVATE_SNAPSHOT_SHA256",
+  "source_manifest_sha256": "REPLACE_WITH_VERIFIED_BASE_SOURCE_MANIFEST_SHA256",
+  "gateway_binary_sha256": "REPLACE_WITH_REVIEWED_BUILT_GATEWAY_BINARY_SHA256",
+  "broker_script_sha256": "REPLACE_WITH_REVIEWED_NATIVE_SERVICE_SCRIPT_SHA256",
+  "authorized_at": "REPLACE_AFTER_CURRENT_RECEIVE_ONLY_AUTHORIZATION",
+  "latest_history_verified_at": "REPLACE_AFTER_FRESH_HISTORY_RECONCILIATION",
+  "discord_identity_verified": false,
+  "assistant_consumer_verified": false,
+  "previous_sender_stopped": false
+}

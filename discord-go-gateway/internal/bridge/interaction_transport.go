@@ -22,6 +22,7 @@ type interactionToken struct {
 // A restart intentionally loses them; outstanding requests must be reissued.
 type interactionTransport struct {
 	client         *http.Client
+	receiveOnly    bool
 	outputStateDir string
 	base           string
 	app            string
@@ -36,7 +37,7 @@ func newInteractionTransport(s Settings) (*interactionTransport, error) {
 		return nil, err
 	}
 	r.client.Timeout = 2500 * time.Millisecond
-	return &interactionTransport{outputStateDir: ReplyStateDir(s.DBPath), client: r.client, base: r.baseURL, app: s.ExpectedBotID, tokens: map[string]interactionToken{}}, nil
+	return &interactionTransport{receiveOnly: s.ReceiveOnly, outputStateDir: ReplyStateDir(s.DBPath), client: r.client, base: r.baseURL, app: s.ExpectedBotID, tokens: map[string]interactionToken{}}, nil
 }
 func (t *interactionTransport) close() {
 	t.mu.Lock()
@@ -116,6 +117,9 @@ func (t *interactionTransport) request(ctx context.Context, method, path string,
 }
 
 func (t *interactionTransport) requestBytes(ctx context.Context, method, path string, raw []byte, contentType string, upload bool, guard func() bool) (map[string]json.RawMessage, string) {
+	if t.receiveOnly && !readOnlyHTTPMethod(method) {
+		return nil, "failed"
+	}
 	req, err := http.NewRequestWithContext(ctx, method, t.base+path, io.NopCloser(bytes.NewReader(raw)))
 	if err != nil || ctx.Err() != nil {
 		return nil, "failed"

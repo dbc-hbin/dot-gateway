@@ -51,7 +51,7 @@ func TestGatewaySupervisorErrorClassification(t *testing.T) {
 		{errors.New("preflight_channel_mismatch"), "configured_channel_mismatch", 2},
 		{errors.New("preflight_http_404"), "configured_channel_lookup_failed", 2},
 		{errors.New("configured_channel_permissions_missing"), "configured_channel_permissions_missing", 2},
-		{errors.New("preflight_transport_failed"), "gateway_connection_failed", 1},
+		{errors.New("preflight_transport_failed"), "gateway_cause_preflight_transport_failed", 1},
 		{errors.New("preflight_http_429"), "gateway_connection_failed", 1},
 		{errors.New("preflight_http_500"), "gateway_connection_failed", 1},
 		{errors.New("preflight_http_503"), "gateway_connection_failed", 1},

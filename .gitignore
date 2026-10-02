@@ -31,3 +31,22 @@ cookies/
 !discord-go-gateway/bin/dot-bridge-listen
 host-support/gateway_native_proxy_config.json
 *.phase-trace
+# Private recovery inputs, bindings and activation records are never source.
+secrets/
+private-input/
+daemon/
+deployment/
+bot-token
+*token*.txt
+ACTIVATION.json
+BOOTSTRAP_RECEIVE_ONLY.json
+CONSUMER_READY.json
+RECOVERY_BLOCK.json
+RECOVERY_STATE.json
+RESTORED_SNAPSHOT.json
+RECOVERED_DELIVERY_FENCES.json
+recovery-no-replay.json
+PRIVATE_DERIVATION.json
+UPGRADE_APPLIED.json
+OVERLAY_MANIFEST.json
+recovery/dot-recovery

@@ -18,7 +18,7 @@ func configureSource(s Source, state Snapshot, dest, stateRoot, snapshotSHA stri
 	if state.ManifestSHA != digest(s.Raw) || snapshotSHA != digest(jsonBytes(state)) {
 		return errors.New("source/private snapshot binding mismatch")
 	}
-	if !filepath.IsAbs(stateRoot) || filepath.Clean(stateRoot) != stateRoot || strings.ContainsAny(stateRoot, "\n\r\x00") {
+	if !filepath.IsAbs(stateRoot) || filepath.Clean(stateRoot) != stateRoot || stateRoot == "/" || strings.ContainsAny(stateRoot, "\n\r\x00") {
 		return errors.New("absolute clean state root required")
 	}
 	return atomicDir(dest, func(stage string) error {
@@ -35,6 +35,15 @@ func configureSource(s Source, state Snapshot, dest, stateRoot, snapshotSHA stri
 			return nil
 		}
 		o := state.Operation
+		// The reporter checks this root even when --state-dir names an unrelated
+		// empty directory. These values are source-derived, never environment or
+		// command-line overrides in the live publisher.
+		if e := replace("insane-search-migration/internal/reporting/recovery.go", `const restoredGatewayRoot = "/opt/assistant-recovery/UNCONFIGURED"`, "const restoredGatewayRoot = "+strconv.Quote(stateRoot)); e != nil {
+			return e
+		}
+		if e := replace("insane-search-migration/internal/reporting/recovery.go", `Target{BotID: "100000000000000001", GuildID: "100000000000000002", ChannelID: "100000000000000003"}`, fmt.Sprintf("Target{BotID: %s, GuildID: %s, ChannelID: %s}", strconv.Quote(o.BotID), strconv.Quote(o.GuildID), strconv.Quote(o.ReportChannelID))); e != nil {
+			return e
+		}
 		if e := replace("insane-search-migration/internal/reporting/rest.go", `Target{BotID: "100000000000000001", GuildID: "100000000000000002", ChannelID: "100000000000000003"}`, fmt.Sprintf("Target{BotID: %s, GuildID: %s, ChannelID: %s}", strconv.Quote(o.BotID), strconv.Quote(o.GuildID), strconv.Quote(o.ReportChannelID))); e != nil {
 			return e
 		}
@@ -85,7 +94,7 @@ func configureSource(s Source, state Snapshot, dest, stateRoot, snapshotSHA stri
 		if e := writeFile(stage, "SOURCE_MANIFEST.json", jsonBytes(Manifest{1, files})); e != nil {
 			return e
 		}
-		return writeFile(stage, "PRIVATE_DERIVATION.json", jsonBytes(map[string]any{"schema": 1, "base_manifest_sha256": digest(s.Raw), "private_snapshot_sha256": snapshotSHA, "delivery_enabled": false, "changes": []string{"exact approved report target", "relocated credential and proxy path references", "nonsecret launch scripts with recovery block"}}))
+		return writeFile(stage, "PRIVATE_DERIVATION.json", jsonBytes(map[string]any{"schema": 1, "base_manifest_sha256": digest(s.Raw), "private_snapshot_sha256": snapshotSHA, "delivery_enabled": false, "changes": []string{"exact approved report target", "compile-time recovery root with matching reports fence required", "relocated credential and proxy path references", "nonsecret launch scripts with recovery block"}}))
 	})
 }
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }

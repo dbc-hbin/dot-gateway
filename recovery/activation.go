@@ -35,23 +35,44 @@ type Proxy struct {
 	NoProxy string `json:"BRIDGE_NO_PROXY"`
 }
 
+// A bootstrap is intentionally separate from completed activation. The marker
+// uses Activation's schema, but must explicitly retain an unverified consumer.
+type receiveOnlyRecoveryBlock struct {
+	Schema                 int    `json:"schema"`
+	ManifestSHA            string `json:"source_manifest_sha256"`
+	SnapshotCreated        string `json:"snapshot_created_at"`
+	DeliveryEnabled        bool   `json:"delivery_enabled"`
+	Requires               string `json:"requires"`
+	ConsumerReady          bool   `json:"consumer_ready"`
+	HistoryContentRestored bool   `json:"history_content_restored"`
+}
+
 func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, component string) (string, error) {
-	if component != "gateway" && component != "headed" {
-		return "", errors.New("component must be gateway or headed")
+	bootstrap := component == "gateway-receive-only"
+	if component != "gateway" && component != "headed" && !bootstrap {
+		return "", errors.New("component must be gateway, gateway-receive-only or headed")
 	}
 	if !hashPattern.MatchString(snapshotSHA) || !hashPattern.MatchString(manifestSHA) {
 		return "", errors.New("activation binding required")
 	}
-	if _, e := os.Lstat(filepath.Join(stateRoot, "RECOVERY_BLOCK.json")); !os.IsNotExist(e) {
+	marker := "ACTIVATION.json"
+	var block receiveOnlyRecoveryBlock
+	if bootstrap {
+		marker = "BOOTSTRAP_RECEIVE_ONLY.json"
+		b, e := readFile(filepath.Join(stateRoot, "RECOVERY_BLOCK.json"), true, 16<<10)
+		if e != nil || strict(b, &block) != nil || block.Schema != 1 || block.ManifestSHA != manifestSHA || !stampOK(block.SnapshotCreated) || block.DeliveryEnabled || block.ConsumerReady || block.HistoryContentRestored || block.Requires == "" {
+			return "", errors.New("receive-only bootstrap requires intact private recovery block")
+		}
+	} else if _, e := os.Lstat(filepath.Join(stateRoot, "RECOVERY_BLOCK.json")); !os.IsNotExist(e) {
 		return "", errors.New("recovery block remains or cannot be checked")
 	}
-	b, e := readFile(filepath.Join(stateRoot, "ACTIVATION.json"), true, 16<<10)
+	b, e := readFile(filepath.Join(stateRoot, marker), true, 16<<10)
 	if e != nil {
-		return "", errors.New("explicit private activation record missing")
+		return "", errors.New("explicit private activation or bootstrap record missing")
 	}
 	var a Activation
-	if strict(b, &a) != nil || a.Schema != 1 || a.SnapshotSHA != snapshotSHA || a.ManifestSHA != manifestSHA || !stampOK(a.AuthorizedAt) || !stampOK(a.HistoryVerifiedAt) || !a.IdentityVerified || !a.ConsumerVerified || !a.PreviousSenderStopped {
-		return "", errors.New("activation record invalid or not fully verified")
+	if strict(b, &a) != nil || a.Schema != 1 || a.SnapshotSHA != snapshotSHA || a.ManifestSHA != manifestSHA || !stampOK(a.AuthorizedAt) || !stampOK(a.HistoryVerifiedAt) || !a.IdentityVerified || !a.PreviousSenderStopped || (!bootstrap && !a.ConsumerVerified) || (bootstrap && a.ConsumerVerified) {
+		return "", errors.New("activation record invalid or not fully verified for requested mode")
 	}
 	b, e = readFile(filepath.Join(stateRoot, "RECOVERY_STATE.json"), true, 16<<10)
 	if e != nil {
@@ -66,6 +87,28 @@ func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, comp
 		return "", errors.New("restored bridge database missing or unsafe")
 	}
 	defer db.Close()
+	if bootstrap {
+		var state string
+		if db.QueryRow(`SELECT value FROM catchup_meta WHERE key='state'`).Scan(&state) != nil || state != "disarmed_restore" {
+			return "", errors.New("receive-only bootstrap requires restored disarmed catchup")
+		}
+		for _, table := range []string{"catchup_routes", "catchup_requested"} {
+			var present, runnable int
+			if db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&present) != nil {
+				return "", errors.New("receive-only catchup state cannot be checked")
+			}
+			if present == 0 {
+				continue
+			}
+			query := `SELECT count(*) FROM ` + table
+			if table == "catchup_routes" {
+				query += ` WHERE state!='disarmed'`
+			}
+			if db.QueryRow(query).Scan(&runnable) != nil || runnable != 0 {
+				return "", errors.New("receive-only bootstrap has runnable catchup state")
+			}
+		}
+	}
 	var n int
 	if e = db.QueryRow("SELECT count(*) FROM inbound").Scan(&n); e != nil || n < r.Events {
 		return "", errors.New("restored tombstones missing")
@@ -73,6 +116,16 @@ func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, comp
 	snapshot, e := readSnapshot(filepath.Join(stateRoot, "RESTORED_SNAPSHOT.json"), snapshotSHA, manifestSHA)
 	if e != nil {
 		return "", errors.New("restored snapshot binding missing")
+	}
+	if bootstrap && block.SnapshotCreated != snapshot.Created {
+		return "", errors.New("receive-only recovery block snapshot mismatch")
+	}
+	// Launchers load the current operation file after this gate. Bind every
+	// routing and intent setting to the reviewed snapshot, not an ambient scope.
+	b, e = readFile(filepath.Join(stateRoot, "operation.json"), true, 16<<10)
+	var operation Operation
+	if e != nil || strict(b, &operation) != nil || operation != snapshot.Operation {
+		return "", errors.New("restored operation binding mismatch")
 	}
 	for _, v := range append(append([]Event{}, snapshot.Events...), snapshot.Ingress...) {
 		var state string
@@ -188,6 +241,9 @@ func activationEnvironment(stateRoot, sourceRoot, snapshotSHA, manifestSHA, comp
 		env += "export https_proxy=" + shQuote(p.URL) + "\n"
 	}
 	env += "export BRIDGE_NO_PROXY=" + shQuote(p.NoProxy) + "\nexport no_proxy=" + shQuote(p.NoProxy) + "\n"
+	if bootstrap {
+		env += "export BRIDGE_RECEIVE_ONLY='true'\nexport BRIDGE_KEEP_CATCHUP_DISARMED='true'\n"
+	}
 	return env, nil
 }
 func printActivationEnv(root, source, snapshot, manifest, component string) error {

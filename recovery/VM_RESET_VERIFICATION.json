@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "verified_at": "2026-10-02",
+  "scope": "Sanitized source-only VM reset recovery update",
+  "tests": {
+    "gateway": "go test -mod=readonly -race ./... and go vet: passed",
+    "recovery": "go test -mod=readonly -race ./... and go vet: passed",
+    "collector_reporting": "go test -race ./... -count=1 -timeout 180s and go vet: passed",
+    "host_support": "python3 -m unittest discover: 33 tests passed",
+    "browser_adapter": "node --test test_adapter.cjs: 13 tests passed",
+    "builds": [
+      "recovery tool",
+      "Discord gateway",
+      "report publisher"
+    ],
+    "source_manifest": "All allowlisted file sizes and SHA-256 verified by rebuilt dot-recovery",
+    "publication_scan": "Reviewed new/modified source; no private identifiers, workspace paths, Library references, credential values or credential hashes added"
+  },
+  "limits": [
+    "Synthetic/offline tests only; no actual credential installation or live service changes",
+    "No VM reset, OS boot, self-wake or model-restart guarantee",
+    "No live Discord writes or automatic scheduler registration",
+    "Old private snapshots remain bound to their exact original source manifests",
+    "Publisher recovery requires separately reconciled matching private fences",
+    "No GitHub Actions workflow configured at verification time"
+  ]
+}

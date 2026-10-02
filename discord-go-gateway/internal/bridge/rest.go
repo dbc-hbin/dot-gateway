@@ -256,8 +256,12 @@ func NewRESTClient(s Settings) (*RESTClient, error) {
 		}
 		return proxy, nil
 	}, DialContext: (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 15 * time.Second, IdleConnTimeout: time.Duration(keep * float64(time.Second)), MaxIdleConns: 16, MaxIdleConnsPerHost: 8, MaxConnsPerHost: 16, ForceAttemptHTTP2: false, TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}}
+	var transport http.RoundTripper = tr
+	if s.ReceiveOnly {
+		transport = &receiveOnlyTransport{next: tr}
+	}
 	s.Policy.AllowedDMIDs = append([]string(nil), s.Policy.AllowedDMIDs...)
-	return &RESTClient{settings: s, client: &http.Client{Transport: tr, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, baseURL: "https://discord.com/api/v10"}, nil
+	return &RESTClient{settings: s, client: &http.Client{Transport: transport, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, baseURL: "https://discord.com/api/v10"}, nil
 }
 
 // Client is for read-only Gateway discovery; message POSTs must use Send.
@@ -272,6 +276,9 @@ func (r *RESTClient) request(ctx context.Context, method, path string, body []by
 	return r.requestContent(ctx, method, path, body, "application/json")
 }
 func (r *RESTClient) requestContent(ctx context.Context, method, path string, body []byte, contentType string) (*http.Response, error) {
+	if r.settings.ReceiveOnly && !readOnlyHTTPMethod(method) {
+		return nil, errReceiveOnly
+	}
 	if r.closed.Load() {
 		return nil, errors.New("sender_closed")
 	}

@@ -3,18 +3,18 @@
   "files": [
     {
       "path": ".gitignore",
-      "bytes": 515,
-      "sha256": "271dbd94afad36f7c0e7e8cd26ff38c2ef915daf6fef242283a6ccd40fc0a3d2"
+      "bytes": 929,
+      "sha256": "dff7ed75775978f61a329424a8f58ff46a36853be567e8bfa6c1537537c288ea"
     },
     {
       "path": "README.md",
-      "bytes": 1873,
-      "sha256": "7197ffce7842bb278a51ccd19d406196d2157f8c6ec2e566d19a8d3ac91cc272"
+      "bytes": 2081,
+      "sha256": "11acc750cc78853da7a0b84fd32886a92c36847c0a58fefec0146da2db70402d"
     },
     {
       "path": "RECOVERY.md",
-      "bytes": 5247,
-      "sha256": "d5dbf64755ab081661f7a2b8e70c93e3f1b0f6c94dc2c47028adedc2f7863662"
+      "bytes": 6704,
+      "sha256": "2f4515c46f0a3f27cc8ada27bb76f365855eb3b0af49f4af9df49ec2a4690bc9"
     },
     {
       "path": "SANITIZATION.json",
@@ -243,8 +243,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/config.go",
-      "bytes": 10568,
-      "sha256": "b4d2bb6173a78c81658ddfb453869f50706f53831ecffe4983afabe390bfc58c"
+      "bytes": 10988,
+      "sha256": "402f1118feae35496dbecec405b7ebbd64b8cb906a1a27b0544e6053083f2cbe"
     },
     {
       "path": "discord-go-gateway/internal/bridge/config_test.go",
@@ -308,8 +308,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/gateway.go",
-      "bytes": 30106,
-      "sha256": "a0d37414dce9c2490d6083fd7c3302cc338efaa7dd8c25662181e42e14f7a28e"
+      "bytes": 32010,
+      "sha256": "2480a462d3b64e115577540910064a1bf70fa7d3541e5a6a3418e08e6399fc73"
     },
     {
       "path": "discord-go-gateway/internal/bridge/gateway_parity_test.go",
@@ -318,8 +318,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/gateway_test.go",
-      "bytes": 10282,
-      "sha256": "23b787dc7f8ef973fac8699407fa7a983bcc684eb2fe7cf70a264f02db543305"
+      "bytes": 10297,
+      "sha256": "a17b2335c0f2cd5c56ac688b79196bad0aa9cca695826e08fa7f6e287727a753"
     },
     {
       "path": "discord-go-gateway/internal/bridge/gateway_validation.go",
@@ -328,8 +328,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/history_catchup.go",
-      "bytes": 28668,
-      "sha256": "0011f7390235dabb87742cea686eacbcbcd396f730b4a13866e73a51d14f2d6e"
+      "bytes": 29740,
+      "sha256": "e6fbd1e3fb9214df3ff784d873acd55278aef22c034fc8b4c46bfd69e93356f7"
     },
     {
       "path": "discord-go-gateway/internal/bridge/history_catchup_test.go",
@@ -373,8 +373,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/interaction_transport.go",
-      "bytes": 7813,
-      "sha256": "d4bd2243e6ee740c0561b764d8354db81f6634399e439ea9798a8a314bd3f65e"
+      "bytes": 7939,
+      "sha256": "0beca51f69d1835731e7f4710261e4d687a8472557c970ffb3791da1c92657e6"
     },
     {
       "path": "discord-go-gateway/internal/bridge/interactions.go",
@@ -522,6 +522,16 @@
       "sha256": "3a08829371c205e3a2c7f6c50bb075f32d82bc59884bd85b33b19c96d7e1195a"
     },
     {
+      "path": "discord-go-gateway/internal/bridge/receive_only.go",
+      "bytes": 1185,
+      "sha256": "a7e9c47ec4b010e51f1aab444dbcdcb5715f49cc362bb915fd5342ef2c923ceb"
+    },
+    {
+      "path": "discord-go-gateway/internal/bridge/receive_only_test.go",
+      "bytes": 8951,
+      "sha256": "913fee2a1028dbe894778571072262239a911304f7f0133c4857ba240cbc916b"
+    },
+    {
       "path": "discord-go-gateway/internal/bridge/recovery_phase3_integration_test.go",
       "bytes": 9799,
       "sha256": "d0ce9a0f7aba13b08582c53142ecf09881b7197f0ac3df02fba7ae40da95fd80"
@@ -563,8 +573,8 @@
     },
     {
       "path": "discord-go-gateway/internal/bridge/rest.go",
-      "bytes": 28108,
-      "sha256": "4cdd942f545fae5efb05d1a7945011e3cdf4a1b573a5fd4e41ae665bb1294de8"
+      "bytes": 28314,
+      "sha256": "f45551a2c2142db2fea4476b2eebfd803d7c667c0442e9e839e2b95114346759"
     },
     {
       "path": "discord-go-gateway/internal/bridge/rest_diagnostic.go",
@@ -852,6 +862,11 @@
       "sha256": "8fa477b0eb38eff1a883c266b1e823d10b0b7407fe503e9687077999fb4b8b18"
     },
     {
+      "path": "host-support/apply_source_overlay.py",
+      "bytes": 4361,
+      "sha256": "afe767b1d16cffc625d942003831f0dd5040834706c5b3edfd8074d6d64b307d"
+    },
+    {
       "path": "host-support/gateway_daemon.py",
       "bytes": 3890,
       "sha256": "f7c22a0d8f78473dd433d092f8f2559004ca3a68708e6b8ab4df44071227548b"
@@ -887,9 +902,29 @@
       "sha256": "a4de830d895f3f4dc4595c31538a77396c17bceb3a2eb54bd3c2a03468ec81f2"
     },
     {
+      "path": "host-support/install_token_file.py",
+      "bytes": 1978,
+      "sha256": "d6a105637f5060fd8fef08c3b0acbe109f60092c1d5eb4d81c4534d8ce2b1518"
+    },
+    {
       "path": "host-support/launch_gateway_native.sh",
       "bytes": 268,
       "sha256": "d6d268c2e61fcf5265228ad0b0714bf2622b8608417d3772913952698627cdad"
+    },
+    {
+      "path": "host-support/recover_gateway.py",
+      "bytes": 14575,
+      "sha256": "7dc16ad0be4ea643573b095b63d0ffb280580891b87cf3ca2ee95ddae123a743"
+    },
+    {
+      "path": "host-support/recover_gateway_native.sh",
+      "bytes": 283,
+      "sha256": "aa7f60672e334c72130908cfb595e213438b10e61c129cad4d74c99d27b8159d"
+    },
+    {
+      "path": "host-support/recovery_files.py",
+      "bytes": 4334,
+      "sha256": "b707171ee4d552e098ddeb57db4bdf0ace5bdb2c8fbf5d7375a649e1e6a26aa7"
     },
     {
       "path": "host-support/start_go_gateway.py",
@@ -905,6 +940,11 @@
       "path": "host-support/test_gateway_supervisor.py",
       "bytes": 9442,
       "sha256": "e98042f10cb56017f8852c6d9b4aecde7b36592d65abdf00b386c4a98320b8ac"
+    },
+    {
+      "path": "host-support/test_recovery_control.py",
+      "bytes": 12895,
+      "sha256": "19b8cafaa3b34345d80add52ce7888ebde26fc07f62f200758166af9cb232ce8"
     },
     {
       "path": "insane-search-migration/COLLECTOR.md",
@@ -1208,8 +1248,18 @@
     },
     {
       "path": "insane-search-migration/internal/reporting/publish.go",
-      "bytes": 7145,
-      "sha256": "104892b9ae09168928c3aee10c5edbdd37def8c2ded8b1fcd405e9321624cf7e"
+      "bytes": 7613,
+      "sha256": "4ca220745d32f32803ebc940478d48262a32e1c0e46fde93ea728033c30805bf"
+    },
+    {
+      "path": "insane-search-migration/internal/reporting/recovery.go",
+      "bytes": 12407,
+      "sha256": "7a953af6b07484e59c1e3f1ff6cb824176fb7f3f1388ce07def50fc3c1c0a22c"
+    },
+    {
+      "path": "insane-search-migration/internal/reporting/recovery_test.go",
+      "bytes": 13134,
+      "sha256": "0c643f5d7416a3ebc217624ea28ca243ef2605af3ab828376c6b5020788dff3e"
     },
     {
       "path": "insane-search-migration/internal/reporting/reporting_test.go",
@@ -1678,8 +1728,8 @@
     },
     {
       "path": "recovery/README.ko.md",
-      "bytes": 21839,
-      "sha256": "51ac62eaa26e166b270a3c4f650423709d82b8995841443e48e785e17bc6d340"
+      "bytes": 22348,
+      "sha256": "da5ea5cd934ab3025189495ff800120e8d5bcbc708ee64f3a32b1c71c4305d2c"
     },
     {
       "path": "recovery/TOOLCHAIN.lock.json",
@@ -1687,9 +1737,24 @@
       "sha256": "ccabadc56ae61e6f350b8730e83b0542edbf2d9d4c532d3783cdaf29e8cbd6bf"
     },
     {
+      "path": "recovery/VM_RESET_RUNBOOK.ko.md",
+      "bytes": 12161,
+      "sha256": "4b832f42782fae7caf9f579b3f869feaa0d0b1369f2aa91a3335887cb3c7d274"
+    },
+    {
+      "path": "recovery/VM_RESET_VERIFICATION.json",
+      "bytes": 1335,
+      "sha256": "e56738bcfc9bdfeeb0c661d12278281ace2e4bf365a1633312fe3f16a16f83d1"
+    },
+    {
       "path": "recovery/activation.go",
-      "bytes": 8403,
-      "sha256": "ae461df4c551123ac30f280490477044e343889c2ec21773ae21803337c27e71"
+      "bytes": 11219,
+      "sha256": "5cb965b8f40d27976df06aa2b3cd8a3675906aa4488fd45cd5dea5635a416637"
+    },
+    {
+      "path": "recovery/activation_test.go",
+      "bytes": 9414,
+      "sha256": "79f623c7571e265aed66e720b349cb17c40aae84c3d0f69d9bb41f1f049a9a5f"
     },
     {
       "path": "recovery/build.sh",
@@ -1703,8 +1768,8 @@
     },
     {
       "path": "recovery/configure.go",
-      "bytes": 5766,
-      "sha256": "fb6d51dd0a7c918a06455d26be1570f39e6e7f81cd086e3f923c70f6a7f3c8e5"
+      "bytes": 6640,
+      "sha256": "5676816666bc15c3f7a0f3503bb3f088696ffc5904f828fa1bf005824513f9a6"
     },
     {
       "path": "recovery/fs.go",
@@ -1733,8 +1798,8 @@
     },
     {
       "path": "recovery/main.go",
-      "bytes": 7215,
-      "sha256": "ef053ee1d7e0dc1d8fd73565f5f23af86df2818f24d0ed72c693c944391e1046"
+      "bytes": 7237,
+      "sha256": "acf3ae1f83b04440175d1ae08238b9ea164c3343c64b1616165a8875210d4480"
     },
     {
       "path": "recovery/memory_test.go",
@@ -1773,8 +1838,8 @@
     },
     {
       "path": "recovery/recovery_test.go",
-      "bytes": 13283,
-      "sha256": "0bd3e2826fd2a099f3a9e0d207385b2bf2d57955fd53787ba0b6e7ba1d8d1a14"
+      "bytes": 13551,
+      "sha256": "43b2701f1219e9f3fe2404bb09aacf27571465981a73377f8407792924973e4f"
     },
     {
       "path": "recovery/source.go",
@@ -1790,6 +1855,16 @@
       "path": "recovery/templates/ACTIVATION.example.json",
       "bytes": 599,
       "sha256": "0beb0b969b22d6c9d474a35c2557853af856df7e386ecc777f093fc19515ad8d"
+    },
+    {
+      "path": "recovery/templates/BOOTSTRAP_RECEIVE_ONLY.example.json",
+      "bytes": 592,
+      "sha256": "424c942f459b25f15d6ed1b455cd3697f1fc5f6b889311e3e14790d8ed7d75a2"
+    },
+    {
+      "path": "recovery/templates/CONSUMER_READY.example.json",
+      "bytes": 225,
+      "sha256": "8a09defbe290b6496ed348d87999bfdb94dd23594b38a4006aa90c363134215e"
     },
     {
       "path": "recovery/templates/dot-gateway.service.example",

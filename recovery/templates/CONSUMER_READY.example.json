@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "consumer_id": "REPLACE_WITH_ONE_STABLE_LOGICAL_CONSUMER_NAME",
+  "boot_id": "REPLACE_WITH_CURRENT_LINUX_BOOT_ID",
+  "controller_verified": false,
+  "exclusive_consumer_verified": false,
+  "paused": true
+}

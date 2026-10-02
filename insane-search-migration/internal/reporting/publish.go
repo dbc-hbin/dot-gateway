@@ -121,6 +121,13 @@ func (c *Client) Publish(ctx context.Context, stateDir, runID string, report []b
 	if err != nil {
 		return receipt, err
 	}
+	guard, err := newRecoveryGuard(stateDir, c.target)
+	if err != nil {
+		return receipt, err
+	}
+	if err = guard.check(runID, report, chunks); err != nil {
+		return receipt, err
+	}
 	s, err := openStore(stateDir)
 	if err != nil {
 		return receipt, err
@@ -172,6 +179,12 @@ func (c *Client) Publish(ctx context.Context, stateDir, runID string, report []b
 			cr.State = "attempted"
 			cr.AttemptedAt = stamp()
 			if err = s.write(name, receipt); err != nil {
+				return receipt, err
+			}
+			// Re-read recovery controls after preflight and the durable attempt
+			// marker, immediately before POST. A newly added block or removed
+			// fence is never converted into permission to replay.
+			if err = guard.check(runID, report, chunks); err != nil {
 				return receipt, err
 			}
 			cr.MessageID, cr.State, cr.Code = c.postOnce(ctx, text, cr.Nonce)

@@ -309,6 +309,7 @@ func TestActivationMissingRootBlocked(t *testing.T) {
 func TestConfiguredSourceAndPositiveActivation(t *testing.T) {
 	dir := privateTemp(t)
 	files := map[string][]byte{
+		"insane-search-migration/internal/reporting/recovery.go":     []byte(`package reporting; const restoredGatewayRoot = "/opt/assistant-recovery/UNCONFIGURED"; var t=Target{BotID: "100000000000000001", GuildID: "100000000000000002", ChannelID: "100000000000000003"}`),
 		"insane-search-migration/internal/reporting/rest.go":         []byte(`package reporting; var t=Target{BotID: "100000000000000001", GuildID: "100000000000000002", ChannelID: "100000000000000003"}`),
 		"insane-search-migration/internal/reporting/config.go":       []byte("package reporting\nconst TokenPath = \"/opt/assistant-shared/.discord-private/bot-token\"\nconst DefaultProxyPath = \"/opt/assistant-project/gateway_native_proxy_config.json\"\n"),
 		"insane-search-migration/runtime/browser/native_service.cjs": []byte("// synthetic inert browser script"),

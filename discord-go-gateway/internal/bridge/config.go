@@ -91,6 +91,8 @@ type Settings struct {
 	Token                string       `json:"-"`
 	ProxyConfig          *ProxyConfig `json:"-"`
 	HTTPKeepaliveSeconds float64
+	ReceiveOnly          bool
+	KeepCatchupDisarmed  bool
 }
 
 func LoadSettings(live, validateProxy bool) (Settings, error) {
@@ -108,6 +110,18 @@ func SettingsFromEnv(env map[string]string, live, validateProxy bool) (Settings,
 			return strings.TrimSpace(v)
 		}
 		return d
+	}
+	for key, target := range map[string]*bool{"BRIDGE_RECEIVE_ONLY": &s.ReceiveOnly, "BRIDGE_KEEP_CATCHUP_DISARMED": &s.KeepCatchupDisarmed} {
+		if value, present := env[key]; present {
+			switch value {
+			case "true":
+				*target = true
+			case "false":
+				*target = false
+			default:
+				return s, fmt.Errorf("invalid_boolean_%s", strings.ToLower(key))
+			}
+		}
 	}
 	s.Policy = Policy{OwnerID: get("DISCORD_OWNER_ID", ""), Platform: "discord", GuildID: get("DISCORD_GUILD_ID", ""), GuildChannelID: get("DISCORD_GUILD_CHANNEL_ID", ""), GuildMode: get("DISCORD_GUILD_MODE", "mention")}
 	seen := map[string]bool{}

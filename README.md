@@ -4,11 +4,11 @@ Source-only backup of the native Go public-source search/collector, guarded head
 
 This repository deliberately contains no credentials, real messages, raw community captures, browser profiles/cookies, SQLite data, private delivery/review ledgers, active schedule configuration, or installed executables. The separate private recovery bundle holds the non-message delivery metadata needed for duplicate-send prevention.
 
-Start with [RECOVERY.md](RECOVERY.md). Live Discord IDs are replaced by documented numeric examples and operational paths are generalized. The source builds and offline tests run without live credentials. It is not a ready-to-send deployment and cannot restore lost message history or credentials.
+Start with [RECOVERY.md](RECOVERY.md) and the [VM reset runbook](recovery/VM_RESET_RUNBOOK.ko.md). Live Discord IDs are replaced by documented numeric examples and operational paths are generalized. The source builds and offline tests run without live credentials. Restoring an existing separately held token file is an explicit, current-authorization operator step; source cannot recreate lost credentials or message history.
 
 - `insane-search-migration/`: Go collector/search/extraction, report publisher, browser client, Playwright layer, synthetic fixtures and pinned dependencies
 - `discord-go-gateway/`: Go gateway/CLI, durable-state and transport safeguards, offline tests and consumer wrappers
-- `host-support/`: Python host-lifetime supervisor/launcher and the small original proxy-validation source dependency; no boot registration
+- `host-support/`: Python host-lifetime supervisor/launcher, idempotent recovery controller, credential-free consumer adapter, opaque operator token-file installer and reviewed source-overlay tool; no boot registration
 - `SANITIZATION.json`: transformations applied for source-only storage
 - `SOURCE_MANIFEST.json`: SHA-256 file inventory for this sanitized source tree
 

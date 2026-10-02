@@ -1,5 +1,7 @@
 # Recovery and deployment boundaries
 
+The complete staged VM-reset path is in [recovery/VM_RESET_RUNBOOK.ko.md](recovery/VM_RESET_RUNBOOK.ko.md): pinned source/state recovery, separately authorized opaque token-file installation, receive-only bootstrap, native host-lifetime launch, single-consumer activation and no-replay checks. A fresh source commit does not silently rebind older private snapshots. Keep each pinned source/snapshot pair and any reviewed private upgrade overlay together.
+
 ## What can be recovered
 
 This tree can rebuild source binaries after official tools/dependencies are installed. Go modules are pinned with `go.mod`/`go.sum`; Playwright 1.63.0 is pinned with its npm lockfile. The recorded build toolchain was Go 1.27.1, Node 24.19.0, npm 11.9.0 and Python 3.12.14. A real headed Linux Chromium 151.0.7922.173 was used previously. Toolchain/browser binaries and package caches are not in Git.
@@ -40,6 +42,7 @@ Host supervisor tests use temporary fake children only:
 cd host-support
 python3 test_gateway_supervisor.py
 python3 test_gateway_daemon.py
+python3 -m unittest -v test_recovery_control
 ```
 
 Optional historical Python oracle tools are source references; they are not production prerequisites or part of the default native test path. Native `vendor/` is a provenance snapshot, not Go module vendoring. Original path/hash export records, the personal cron instance and historical runtime evidence are intentionally omitted, so this sanitized tree is not a byte-identical copy of the original migration export.
@@ -59,6 +62,8 @@ The report publisher's exact live target tuple in `internal/reporting/rest.go` a
 
 No token is stored. Reconnect credentials only with the user's approval through the official secure workflow, respecting user-entry requirements. Never place credentials in Git, command arguments, logs or chat. New security permissions or persistent access require their own authorization.
 
+The optional `host-support/install_token_file.py` copies an existing private input file as opaque bytes only after the operator explicitly invokes `--apply` with current authorization. It never emits the credential or its hash, never replaces an existing destination, and does not confer approval. The Linux recovery controller requires Python 3.12+ with pidfd support. Go's offline recovery tool still never reads or transfers credential bytes.
+
 ## Delivery history and schedules
 
 Restore and verify the newest separate private publisher outbox before sending. It contains exact run/payload/chunk hashes, nonces and receipt IDs but no report text. Never replace a newer ledger with this source repository or an older backup. Do not delete state, change run IDs or retry uncertain sends to bypass replay protection. Without a current ledger, pause delivery and reconcile against verified service history.
@@ -70,5 +75,7 @@ The gateway SQLite database is intentionally absent because it contains real con
 ## No automatic recovery guarantee
 
 The supervisor and browser launcher provide host-lifetime process management. No VM reboot or blank-VM full restore has been tested by this backup task, and no boot service is installed here. A connected gateway does not establish that an assistant-side consumer is active or reasoning. Revalidate the real display, credentials, permissions, process identity, consumer and ledger separately before authorized live use.
+
+Never persist an execution-scoped localhost proxy into a detached service. Use only the current environment's approved, verified native host-lifetime route; the recovery launcher preserves explicit private proxy configuration and does not guess a replacement or bypass network policy. PID/boot/start-time/executable and dispatcher-lock checks plus a fresh post-launch DB heartbeat are required. `end_to_end_ready` remains false because transport health cannot prove model reasoning or receipt of CLI output.
 
 No service restart, token reading, live message sending or new scheduler registration is part of the backup verification. `VERIFICATION.json` states exactly what was tested and its limits.

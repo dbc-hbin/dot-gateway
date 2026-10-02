@@ -25,7 +25,7 @@ func execute(args []string) error {
 	operationRoot := f.String("operations-root", "", "private committed collector/reporting operation directory")
 	operationsFile := f.String("operations", "", "private operations snapshot")
 	operationsSHA := f.String("operations-sha", "", "trusted operations snapshot SHA-256")
-	component := f.String("component", "", "gateway or headed for activation environment")
+	component := f.String("component", "", "gateway, gateway-receive-only or headed for activation environment")
 	stateRoot := f.String("state-root", "", "new restored private state root for generated path references")
 	dest := f.String("new-root", "", "new absolute destination root; never existing")
 	db := f.String("db", "", "private bridge database")

@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net"
 	"strings"
@@ -84,7 +85,7 @@ func (g *gatewayState) health(r *RESTClient) map[string]any {
 	if g.guildFailure != "" {
 		warnings["configured_guild_unavailable"] = 1
 	}
-	return map[string]any{"guild_ready": g.guildReady, "guild_failure": g.guildFailure, "state": g.state, "transport": "go_discord_gateway", "ready_count": g.readyCount, "disconnects": g.disconnects, "last_ready_at": g.lastReady, "last_disconnect_at": g.lastDisconnect, "raw_sender": r.Diagnostics(), "ingress_counts": ingress, "warning_counts": warnings}
+	return map[string]any{"guild_ready": g.guildReady, "guild_failure": g.guildFailure, "state": g.state, "transport": "go_discord_gateway", "ready_count": g.readyCount, "disconnects": g.disconnects, "last_ready_at": g.lastReady, "last_disconnect_at": g.lastDisconnect, "raw_sender": r.Diagnostics(), "receive_only": r.settings.ReceiveOnly, "keep_catchup_disarmed": r.settings.KeepCatchupDisarmed, "ingress_counts": ingress, "warning_counts": warnings}
 }
 
 func persistGatewayHealth(store *Store, details map[string]any) error {
@@ -114,6 +115,20 @@ func ClassifyGatewayError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var restError *discordgo.RESTError
+	if errors.As(err, &restError) && restError.Response != nil {
+		return fmt.Errorf("gateway_discovery_http_%d", restError.Response.StatusCode)
+	}
+	if errors.Is(err, websocket.ErrBadHandshake) {
+		return errors.New("gateway_websocket_bad_handshake")
+	}
+	var networkError *net.OpError
+	if errors.As(err, &networkError) {
+		if networkError.Timeout() {
+			return errors.New("gateway_network_timeout")
+		}
+		return errors.New("gateway_network_connection_failed")
+	}
 	var closed *websocket.CloseError
 	if errors.As(err, &closed) {
 		switch closed.Code {
@@ -142,6 +157,17 @@ func ClassifyGatewayError(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return errors.New("gateway_startup_timeout")
+	}
+	for _, code := range []string{"preflight_transport_failed", "preflight_invalid_ack", "request_build_failed", "receive_only_write_blocked", "invalid_ack", "response_read_failed", "oversize_ack"} {
+		if err.Error() == code {
+			return errors.New("gateway_cause_" + code)
+		}
+	}
+	text := strings.ToLower(err.Error())
+	for _, pair := range [][2]string{{"forbidden", "forbidden"}, {"bad handshake", "websocket_bad_handshake"}, {"proxyconnect", "proxy_connect_failed"}, {"unexpected eof", "unexpected_eof"}, {"eof", "eof"}, {"not found", "not_found"}, {"permission denied", "permission_denied"}, {"connection refused", "connection_refused"}, {"403", "http_403"}, {"timeout", "timeout"}, {"receive_only_write_blocked", "unexpected_write_blocked"}, {"400", "http_400"}, {"status", "http_status"}, {"connect", "connect"}} {
+		if strings.Contains(text, pair[0]) {
+			return errors.New("gateway_connection_" + pair[1])
+		}
 	}
 	return errors.New("gateway_connection_failed")
 }
@@ -193,7 +219,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		return e
 	}
 	defer rest.Close()
-	if e = store.ActivateCatchup(settings, time.Now()); e != nil {
+	if e = prepareGatewayCatchup(store, settings, time.Now()); e != nil {
 		return e
 	}
 	rest.contextEnabled = true
@@ -272,7 +298,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	}
 	defer func() { cancel(); controlWG.Wait() }()
 	s.AddHandler(func(_ *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i != nil && i.Interaction != nil {
+		if !settings.ReceiveOnly && i != nil && i.Interaction != nil {
 			received := time.Now()
 			startControl(func() { controls.Handle(ctx, i.Interaction, received) })
 		}
@@ -298,7 +324,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	}()
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageReactionAdd) {
-		if m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
+		if !settings.ReceiveOnly && m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
 			select {
 			case reactions <- reactionInput{m.MessageReaction, true}:
 			default:
@@ -307,7 +333,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	})
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageReactionRemove) {
-		if m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
+		if !settings.ReceiveOnly && m != nil && m.MessageReaction != nil && m.UserID == settings.Policy.OwnerID {
 			select {
 			case reactions <- reactionInput{m.MessageReaction, false}:
 			default:
@@ -336,8 +362,10 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	disconnected := make(chan struct{}, 1)
 	s.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
 		g.disconnect()
-		if err := store.MarkCatchupGaps(time.Now(), "disconnected"); err != nil {
-			fail("catchup_persistence_failed")
+		if !settings.KeepCatchupDisarmed {
+			if err := store.MarkCatchupGaps(time.Now(), "disconnected"); err != nil {
+				fail("catchup_persistence_failed")
+			}
 		}
 		hub.Notify()
 		select {
@@ -355,8 +383,10 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		select {
 		case incoming <- sourceGatewayEvent{Create: m.Message}:
 		default:
-			if err := store.recordCatchupEventGap(m.ChannelID, m.ID); err != nil {
-				fail("catchup_persistence_failed")
+			if !settings.KeepCatchupDisarmed {
+				if err := store.recordCatchupEventGap(m.ChannelID, m.ID); err != nil {
+					fail("catchup_persistence_failed")
+				}
 			}
 			fail("gateway_inbound_capacity_exceeded")
 		}
@@ -450,21 +480,23 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			}
 		}
 	})
-	start(func() {
-		if err := catchupLoop(ctx, store, rest, hub, g); err != nil {
-			if err.Error() == "authentication_failed" {
-				fail("authentication_failed")
-			} else {
-				fail("catchup_failed")
+	if !settings.KeepCatchupDisarmed {
+		start(func() {
+			if err := catchupLoop(ctx, store, rest, hub, g); err != nil {
+				if err.Error() == "authentication_failed" {
+					fail("authentication_failed")
+				} else {
+					fail("catchup_failed")
+				}
 			}
-		}
-	})
+		})
+	}
 	start(func() {
 		if err := messageSourceLoop(ctx, store, rest, hub, g); err != nil {
 			fail("source_refresh_failed")
 		}
 	})
-	start(func() {
+	startGatewayWriter(settings.ReceiveOnly, start, func() {
 		if err := dispatchLoopMeasured(ctx, store, hub, g, func(ctx context.Context, c Chunk) (SendResult, Diagnostics) {
 			epoch := g.epoch.Load()
 			if c.Source.ReplyKind == "interaction" {
@@ -479,17 +511,17 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			fail("dispatcher_failed")
 		}
 	})
-	start(func() {
+	startGatewayWriter(settings.ReceiveOnly, start, func() {
 		if err := diagnosticLoop(ctx, store, rest, hub, g, func() bool { return gatewayRoutePermissions(g, s, settings, Envelope{RouteKind: "guild_text"}) }); err != nil {
 			fail("diagnostic_dispatch_failed")
 		}
 	})
-	start(func() {
+	startGatewayWriter(settings.ReceiveOnly, start, func() {
 		if err := feedbackLoop(ctx, store, rest, hub, g); err != nil {
 			fail("feedback_persistence_failed")
 		}
 	})
-	start(func() {
+	startGatewayWriter(settings.ReceiveOnly, start, func() {
 		if err := typingLoop(ctx, store, rest, hub, g); err != nil {
 			fail("typing_persistence_failed")
 		}

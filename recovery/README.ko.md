@@ -1,5 +1,11 @@
 # VM 손실 복구 도구
 
+소스 복원 이후 기존 토큰 파일 설치, 수신 전용 부트스트랩, 네이티브 프로세스 재가동과
+단일 답장 소비자 연결은 [VM_RESET_RUNBOOK.ko.md](VM_RESET_RUNBOOK.ko.md)를 함께 따릅니다.
+이 문서의 dot-recovery는 계속 offline Go 도구이며, 추가 host controller는 Linux
+Python 3.12+ 도구입니다. 기존 snapshot은 그 snapshot에 연결된 소스 manifest와만
+직접 호환됩니다. 새 공개 commit으로 hash를 임의 교체하지 않습니다.
+
 ## 무엇을 복구하는가
 
 공개 GitHub 소스 + 별도 비공개 운영 메타데이터로 새로운 디렉터리에 기능을 재구성합니다. `dot-recovery` 자체는 Go 프로그램이며 네트워크 전송, 서비스 시작, 패키지 설치, 비밀 복사, 스케줄 등록을 하지 않습니다. 모든 쓰기는 `--apply`가 있을 때만, 기존 경로를 덮어쓰지 않는 새 대상에 수행됩니다.

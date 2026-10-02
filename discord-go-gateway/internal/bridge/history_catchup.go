@@ -131,10 +131,36 @@ func catchupLiveProgressDB(db *storeConn, e Envelope, outcome string) error {
 	return err
 }
 
+// A receive bootstrap must not create witnesses, arm catchup, or mutate a
+// restored disarm reason. Reject any runnable leftover rather than rewriting it.
+func prepareGatewayCatchup(s *Store, settings Settings, now time.Time) error {
+	if !settings.KeepCatchupDisarmed {
+		return s.ActivateCatchup(settings, now)
+	}
+	_, err := s.call(func(db *storeConn) (any, error) {
+		var state string
+		if err := db.QueryRow(`SELECT value FROM catchup_meta WHERE key='state'`).Scan(&state); err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		var runnable int
+		if err := db.QueryRow(`SELECT (SELECT count(*) FROM catchup_routes WHERE state!='disarmed')+(SELECT count(*) FROM catchup_requested)`).Scan(&runnable); err != nil {
+			return nil, err
+		}
+		if (state != "" && !strings.HasPrefix(state, "disarmed")) || runnable != 0 {
+			return nil, errors.New("catchup_must_already_be_disarmed")
+		}
+		return nil, nil
+	})
+	return err
+}
+
 // ActivateCatchup is daemon-only (under the dispatcher lock). It never derives
 // a cursor from inbox times. Its first baseline is now. Copied/restored ledgers
 // cannot inherit activation: both a private local witness and inode/path bind it.
 func (s *Store) ActivateCatchup(settings Settings, now time.Time) error {
+	if settings.KeepCatchupDisarmed {
+		return errors.New("catchup_activation_disabled")
+	}
 	path, err := filepath.Abs(settings.DBPath)
 	if err != nil {
 		return err
@@ -524,6 +550,9 @@ func (s *Store) applyCatchupPage(settings Settings, in CatchupStatus, messages [
 	return v.(string), nil
 }
 func catchupLoop(ctx context.Context, s *Store, r *RESTClient, hub *WakeHub, g *gatewayState) error {
+	if r.settings.KeepCatchupDisarmed {
+		return nil
+	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	var lastEpoch uint64 = ^uint64(0)
