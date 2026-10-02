@@ -407,7 +407,7 @@ func readPendingClaimPage(db *storeConn, now float64, after *inboundRow) ([]inbo
 	query := `WITH candidates AS MATERIALIZED (
 		SELECT id,created FROM inbound
 		WHERE (state='pending' OR (state='claimed' AND lease_until<=?))
-		AND NOT EXISTS(SELECT 1 FROM worker_bindings b JOIN worker_runtime w ON w.worker=b.worker AND w.incarnation=b.incarnation WHERE b.inbound_id=inbound.id AND b.claim=inbound.claim)`
+		AND NOT EXISTS(SELECT 1 FROM (` + unresolvedWorkerBindingsSQL + `) b WHERE b.inbound_id=inbound.id)`
 	args := []any{now}
 	if after != nil {
 		query += ` AND (created,id)>(?,?)`
@@ -527,8 +527,14 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 						}
 						continue
 					}
+					// Filter execution metadata before decoding conversation JSON;
+					// unrelated pending payloads must remain outside the claim page.
 					var busy int
-					if err = db.QueryRow("SELECT count(*) FROM inbound WHERE (state='worker_recovery_pending' OR (state='claimed' AND lease_until>?)) AND id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?", now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
+					if err = db.QueryRow(`WITH busy AS MATERIALIZED (
+						SELECT id,platform,envelope FROM inbound WHERE state='worker_recovery_pending'
+						OR (state='claimed' AND lease_until>?)
+						OR EXISTS(SELECT 1 FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=inbound.id))
+						SELECT count(*) FROM busy WHERE id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?`, now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
 						return nil, err
 					}
 					if busy > 0 {

@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+// A binding is an execution-generation association, not a mutable queue lease.
+// Source invalidation may clear inbound.claim while the native turn still runs.
+// Only an attested stop (or its explicitly registered successor) releases it;
+// neither inbound nor worker lease expiry establishes that execution stopped.
+const unresolvedWorkerBindingsSQL = `SELECT b.inbound_id,b.claim,b.worker,b.incarnation,b.controller
+ FROM worker_bindings b JOIN worker_runtime w ON w.worker=b.worker AND w.incarnation=b.incarnation
+ WHERE w.state NOT IN ('completed','interrupted','failed')`
+
 func initWorkerControl(db *storeConn) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS worker_incarnations(
  worker TEXT NOT NULL,incarnation TEXT NOT NULL,controller TEXT NOT NULL,previous TEXT NOT NULL,evidence TEXT NOT NULL,created REAL NOT NULL,PRIMARY KEY(worker,incarnation));
@@ -325,7 +333,7 @@ func requestWorkerCancellationDB(db *storeConn, id, revision string) error {
 	if err := db.QueryRow(`SELECT state,COALESCE(claim,'') FROM inbound WHERE id=?`, id).Scan(&state, &claim); err != nil {
 		return err
 	}
-	err := db.QueryRow(`SELECT worker,incarnation,controller FROM worker_bindings WHERE inbound_id=? AND claim=?`, id, claim).Scan(&worker, &incarnation, &controller)
+	err := db.QueryRow(`SELECT b.claim,b.worker,b.incarnation,b.controller FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=?`, id).Scan(&claim, &worker, &incarnation, &controller)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}

@@ -117,7 +117,7 @@ func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, 
 	}
 	r.Revision = controlRevision(r.Source)
 	var worker, incarnation string
-	err = db.QueryRow(`SELECT b.worker,b.incarnation FROM worker_bindings b JOIN inbound i ON i.id=b.inbound_id AND i.claim=b.claim WHERE i.id=?`, id).Scan(&worker, &incarnation)
+	err = db.QueryRow(`SELECT b.worker,b.incarnation FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=?`, id).Scan(&worker, &incarnation)
 	if err == nil {
 		w, e := workerStatusDB(db, worker, epoch())
 		if e != nil {
@@ -237,7 +237,7 @@ func (s *Store) CancelControlRequest(route Envelope, id, revision string) (Contr
 			}
 			// A completed delivery can still have an explicitly bound native turn.
 			var bound int
-			if err = db.QueryRow("SELECT count(*) FROM worker_bindings b JOIN inbound i ON i.id=b.inbound_id AND i.claim=b.claim WHERE i.id=?", id).Scan(&bound); err != nil {
+			if err = db.QueryRow(`SELECT count(*) FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=?`, id).Scan(&bound); err != nil {
 				return nil, err
 			}
 			if r.State == "delivered" && bound == 0 {
@@ -448,7 +448,7 @@ func (s *Store) expireInteractionID(id string) error {
 // recent history. A truncated status page must never turn many into "exactly one".
 func (s *Store) activeControlRequests(route Envelope) ([]ControlRequest, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
-		rows, err := db.Query(`SELECT i.id FROM inbound i WHERE json_extract(i.envelope,'$.sender_id')=? AND json_extract(i.envelope,'$.conversation_id')=? AND COALESCE(json_extract(i.envelope,'$.guild_id'),'')=? AND (i.state IN ('pending','claimed','worker_recovery_pending') OR EXISTS(SELECT 1 FROM worker_cancellations wc WHERE wc.inbound_id=i.id AND wc.state='cancel_requested') OR EXISTS(SELECT 1 FROM worker_bindings wb WHERE wb.inbound_id=i.id AND wb.claim=i.claim) OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND (c.state IN ('sending','uncertain') OR (i.state!='cancelled' AND c.state IN ('pending','failed'))))) ORDER BY i.created LIMIT 2`, route.SenderID, route.ConversationID, route.GuildID)
+		rows, err := db.Query(`SELECT i.id FROM inbound i WHERE json_extract(i.envelope,'$.sender_id')=? AND json_extract(i.envelope,'$.conversation_id')=? AND COALESCE(json_extract(i.envelope,'$.guild_id'),'')=? AND (i.state IN ('pending','claimed','worker_recovery_pending') OR EXISTS(SELECT 1 FROM worker_cancellations wc WHERE wc.inbound_id=i.id AND wc.state='cancel_requested') OR EXISTS(SELECT 1 FROM (`+unresolvedWorkerBindingsSQL+`) wb WHERE wb.inbound_id=i.id) OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND (c.state IN ('sending','uncertain') OR (i.state!='cancelled' AND c.state IN ('pending','failed'))))) ORDER BY i.created LIMIT 2`, route.SenderID, route.ConversationID, route.GuildID)
 		if err != nil {
 			return nil, err
 		}

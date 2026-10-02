@@ -148,7 +148,13 @@ has no “force stopped” or unverified unbound ACK command.
 
 Expired bound claims are not automatically reclaimed by `next`, even if worker
 observations are stale. This avoids running a duplicate native turn merely
-because a heartbeat was missed. Legacy unbound claim recovery is unchanged.
+because a heartbeat was missed. The immutable execution binding survives source
+refreshes that revoke or clear the queue claim: cancellation still targets its
+original claim and native incarnation. While that execution remains unresolved,
+later work in the same conversation also stays fenced, including after an early
+reply. A controller-attested completion or stop releases the execution fence;
+any explicit-recovery quarantine still applies. Legacy unbound claim recovery
+is unchanged.
 
 After the controller really interrupts or otherwise verifies the old native
 turn stopped, it records `interrupted` or `failed` with `worker-observe`.

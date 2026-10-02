@@ -398,3 +398,110 @@ func TestWorkerSlashCancelDeliveredEarlyReplyAndRepeatedRequest(t *testing.T) {
 		t.Fatal(messages)
 	}
 }
+
+func TestWorkerExpiredBoundConversation(t *testing.T) {
+	s, _ := testStore(t)
+	ingestLedger(t, s, "one", "channel")
+	c := claimLedger(t, s)
+	boundWorker(t, s, c)
+	workerSQL(t, s, `UPDATE inbound SET lease_until=? WHERE id=?`, epoch()-1, c.InboundID)
+	workerSQL(t, s, `UPDATE worker_runtime SET lease_until=?`, epoch()-1)
+	ingestLedger(t, s, "two", "channel")
+	next, err := s.ClaimNext(60, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != nil {
+		t.Fatalf("later same-conversation claim admitted while original bound native turn still running: old=%s next=%s", c.InboundID, next.InboundID)
+	}
+	ingestLedger(t, s, "other", "other-channel")
+	if next = claimLedger(t, s); next.Envelope.ConversationID != "other-channel" {
+		t.Fatal("execution fence blocked an unrelated conversation", next)
+	}
+}
+func TestWorkerUnchangedSourceRefreshBound(t *testing.T) {
+	s, cfg, m, c := sourceFixture(t)
+	w := boundWorker(t, s, c)
+	if _, err := s.InvalidateSourceUpdate(m.ChannelID, m.GuildID, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	in, err := s.SourceRefreshFor(projectGatewayMessage(cfg, m))
+	if err != nil || in == nil {
+		t.Fatal(in, err)
+	}
+	result, err := s.ApplySourceRefresh(*in, projectGatewayMessage(cfg, m))
+	if err != nil || result != "unchanged" {
+		t.Fatal(result, err)
+	}
+	next, err := s.ClaimNext(60, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != nil {
+		t.Fatalf("same inbound reclaimed while original bound native turn still running: old=%s/%s next=%s/%s", c.InboundID, c.Claim, next.InboundID, next.Claim)
+	}
+	if _, err = s.ObserveWorker(w.Worker, w.Incarnation, w.Controller, "completed", 60, "native:completed"); err != nil {
+		t.Fatal(err)
+	}
+	next, err = s.ClaimNext(60, 0)
+	if err != nil || next == nil || next.InboundID != c.InboundID || next.Claim == c.Claim {
+		t.Fatal("verified completion did not release refreshed work", next, err)
+	}
+}
+func TestWorkerCancelAfterUnchangedSourceRefresh(t *testing.T) {
+	s, cfg, m, c := sourceFixture(t)
+	w := boundWorker(t, s, c)
+	if _, err := s.InvalidateSourceUpdate(m.ChannelID, m.GuildID, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	in, err := s.SourceRefreshFor(projectGatewayMessage(cfg, m))
+	if err != nil || in == nil {
+		t.Fatal(in, err)
+	}
+	if _, err = s.ApplySourceRefresh(*in, projectGatewayMessage(cfg, m)); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.CancelControlRequest(c.Envelope, c.InboundID, controlRevision(c.Envelope))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Cancellation == nil || r.Cancellation.State != "cancel_requested" || r.Cancellation.Worker != w.Worker || r.Cancellation.Claim != c.Claim {
+		t.Fatalf("still-running bound turn lost from cancellation: %+v", r.Cancellation)
+	}
+	if r.Worker == nil || r.Worker.Incarnation != w.Incarnation {
+		t.Fatal("status lost execution generation after claim revocation", r)
+	}
+	later := *m
+	later.ID = "888888888888888888"
+	if outcome, err := s.Ingest(projectGatewayMessage(cfg, &later)); err != nil || outcome != "accepted" {
+		t.Fatal(outcome, err)
+	}
+	if next, err := s.ClaimNext(60, 0); err != nil || next != nil {
+		t.Fatal("cancellation released conversation before interrupt", next, err)
+	}
+	if _, err = s.AcknowledgeWorkerCancellation(c.InboundID, w.Worker, w.Incarnation, w.Controller, "native:interrupt"); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := s.ClaimNext(60, 0); err != nil || next == nil || next.InboundID == c.InboundID {
+		t.Fatal("interrupt acknowledgement did not release later work", next, err)
+	}
+}
+
+func TestWorkerConversationReleasedAfterCompletion(t *testing.T) {
+	s, _ := testStore(t)
+	ingestLedger(t, s, "one", "channel")
+	c := claimLedger(t, s)
+	w := boundWorker(t, s, c)
+	replyLedger(t, s, c, "early answer")
+	ingestLedger(t, s, "two", "channel")
+	if next, err := s.ClaimNext(60, 0); err != nil || next != nil {
+		t.Fatal("early reply released still-running execution", next, err)
+	}
+	if _, err := s.ObserveWorker(w.Worker, w.Incarnation, w.Controller, "completed", 60, "native:completed"); err != nil {
+		t.Fatal(err)
+	}
+	workerSQL(t, s, `UPDATE worker_runtime SET lease_until=?`, epoch()-1)
+	if next, err := s.ClaimNext(60, 0); err != nil || next == nil || next.InboundID == c.InboundID {
+		t.Fatal("completed execution kept conversation fenced", next, err)
+	}
+}
