@@ -111,7 +111,7 @@ func (s *Store) replyVerificationChunk(replyID string, index int, uncertain bool
 	v, e := s.call(func(db *storeConn) (any, error) {
 		var v result
 		var source string
-		err := db.QueryRow(`SELECT c.reply_id,c.idx,c.text,i.envelope,CASE WHEN c.idx=0 THEN COALESCE(o.payload,'') ELSE '' END,c.state,COALESCE(c.message_id,''),COALESCE(receipt.receipt,'') FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id LEFT JOIN reply_outputs o ON o.reply_id=r.id LEFT JOIN reply_output_receipts receipt ON receipt.reply_id=c.reply_id AND receipt.idx=c.idx WHERE c.reply_id=? AND c.idx=?`, replyID, index).Scan(&v.C.ReplyID, &v.C.Index, &v.C.Text, &source, &v.C.Output, &v.R.State, &v.R.MessageID, &v.R.OutputReceipt)
+		err := db.QueryRow(`SELECT c.reply_id,c.idx,c.text,i.envelope,`+chunkReplyOutputSQL+`,c.state,COALESCE(c.message_id,''),COALESCE(receipt.receipt,'') FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id LEFT JOIN reply_output_receipts receipt ON receipt.reply_id=c.reply_id AND receipt.idx=c.idx WHERE c.reply_id=? AND c.idx=?`, replyID, index).Scan(&v.C.ReplyID, &v.C.Index, &v.C.Text, &source, &v.C.Output, &v.R.State, &v.R.MessageID, &v.R.OutputReceipt)
 		if err == sql.ErrNoRows {
 			return nil, errors.New("unknown_reply_chunk")
 		}

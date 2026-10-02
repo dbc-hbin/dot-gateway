@@ -29,7 +29,7 @@ func initIngressValidation(db *storeConn) error {
 
 func activeInboundCount(db *storeConn) (int, error) {
 	var n int
-	err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE state IN ('pending','claimed')) + (SELECT count(*) FROM ingress_validation WHERE state IN ('pending','blocked'))`).Scan(&n)
+	err := db.QueryRow(`SELECT (SELECT count(*) FROM inbound WHERE state IN ('pending','claimed','worker_recovery_pending')) + (SELECT count(*) FROM ingress_validation WHERE state IN ('pending','blocked'))`).Scan(&n)
 	return n, err
 }
 

@@ -34,8 +34,13 @@ The native supervisor manages the gateway process only. Process uptime, a fresh
 gateway heartbeat, an open Discord connection, and a typing lease do not establish
 that an assistant is generating an answer. Consumer status exposes waiting-CLI
 observations and backlog separately; it explicitly does not prove stdout receipt
-or reasoning liveness. There is no supported inactive-session Discord wake in
-this integration, and no reboot auto-start guarantee.
+or reasoning liveness. The optional [worker-control protocol](WORKER_CONTROL.md)
+adds controller-attested worker incarnations, fenced recovery, and durable
+interrupt requests/acknowledgements. A controller with access to the actual
+reasoning runtime must perform those operations; the Go gateway cannot restart
+or interrupt the external native assistant by itself. There is no supported
+inactive-session Discord wake in this integration, and no reboot auto-start
+guarantee.
 
 ## Verified child threads
 
@@ -67,6 +72,8 @@ Use the versioned manifest workflow for files, images, ordinary audio files and
 bounded explicit embeds. The private outbox/spool, exact consumer commands,
 receipt verification, limits and deployment gates are in [rich output](RICH_OUTPUT.md).
 Plain text remains the default, with link previews suppressed.
+Confirmed-delivery task continuations can use the same manifest for files and
+images; see [idempotent follow-ups](FOLLOWUPS.md).
 
 ## Request-bound message operations
 

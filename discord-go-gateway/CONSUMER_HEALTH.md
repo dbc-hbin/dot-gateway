@@ -34,7 +34,9 @@ validates and atomically promotes them.
 Waiting `next` invocations use unique `runtime` keys under `consumer_poll:`.
 Each stores only a technical consumer name, observation time, and poll deadline.
 There are no message texts, route IDs, claim tokens, authentication credentials,
-or response contents. Existing schema and claim semantics are unchanged.
+or response contents. These CLI observations do not grant or extend claims.
+The separate opt-in worker binding protocol described below adds explicit
+recovery fencing for bound claims; legacy unbound recovery remains unchanged.
 
 - A ready or recovered fast-path claim does not create a waiting observation
 - A waiting invocation writes its start, then at most once every 10 seconds
@@ -66,3 +68,23 @@ scoped stale-row pruning, overlapping invocation cleanup, timing-sample eviction
 without losing the durable last-reply time, staged ingress visibility, and actual subprocess
 wait/timeout/claim/overlap lifecycles. All ledgers are disposable.
 
+
+## Native-worker controller attestations
+
+`status.worker_control` and `worker-status` expose a separate, opt-in durable
+controller protocol. It records the actual native task, a turn-scoped incarnation,
+an exact claim binding, a bounded controller-attested observation lease, and
+pending execution-cancellation acknowledgements. Stale observations fail closed
+to `unknown`. They never change CLI telemetry into model-liveness proof, and
+`response_path.end_to_end_ready` remains false.
+
+The gateway has no native start/interrupt API and reports that limitation in
+status. Only the actual controller can observe/interrupt/resume the native turn
+and attest its result. Bound expired claims require verified stop and explicit
+incarnation recovery, rather than silent automatic reuse.
+
+See [WORKER_CONTROL.md](WORKER_CONTROL.md) for commands, recovery fencing, the
+normal `completed` transition, and why `/cancel` remains `cancel_requested` until
+a real controller interruption is acknowledged. Recovery-pending claims and
+unbound pending cancellations remain visible in worker-control status; absence
+of a waiting CLI does not mean those requests finished.

@@ -92,3 +92,11 @@ The supervisor and browser launcher provide host-lifetime process management. No
 Never persist an execution-scoped localhost proxy into a detached service. Use only the current environment's approved, verified native host-lifetime route; the recovery launcher preserves explicit private proxy configuration and does not guess a replacement or bypass network policy. PID/boot/start-time/executable and dispatcher-lock checks plus a fresh post-launch DB heartbeat are required. `end_to_end_ready` remains false because transport health cannot prove model reasoning or receipt of CLI output.
 
 No service restart, token reading, live message sending or new scheduler registration is part of the backup verification. `VERIFICATION.json` states exactly what was tested and its limits.
+
+Worker-control observations and task bindings are runtime state, not proof that
+an external reasoning process survived a restore. The content-free recovery
+snapshot does not export the new worker protocol or follow-up key/output maps.
+Do not reconstruct continuation keys, claim tokens, worker readiness, or stop
+acknowledgements from it. A restored deployment must reconcile outstanding
+external work and establish a fresh controller-attested incarnation before
+binding new work; source publication alone does not activate that controller.

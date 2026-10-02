@@ -341,7 +341,7 @@ func operationOwnedChunkDB(db *storeConn, channel, message string) (Chunk, SendR
 	var c Chunk
 	var receipt SendResult
 	var raw string
-	err := db.QueryRow(`SELECT c.reply_id,c.idx,c.text,i.envelope,CASE WHEN c.idx=0 THEN COALESCE(o.payload,'') ELSE '' END,c.state,c.message_id,COALESCE(rc.receipt,''),COALESCE(c.code,'') FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id LEFT JOIN reply_outputs o ON o.reply_id=r.id LEFT JOIN reply_output_receipts rc ON rc.reply_id=c.reply_id AND rc.idx=c.idx WHERE c.state='sent' AND c.message_id=? AND json_extract(i.envelope,'$.conversation_id')=?`, message, channel).Scan(&c.ReplyID, &c.Index, &c.Text, &raw, &c.Output, &receipt.State, &receipt.MessageID, &receipt.OutputReceipt, &receipt.Code)
+	err := db.QueryRow(`SELECT c.reply_id,c.idx,c.text,i.envelope,`+chunkReplyOutputSQL+`,c.state,c.message_id,COALESCE(rc.receipt,''),COALESCE(c.code,'') FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id LEFT JOIN reply_output_receipts rc ON rc.reply_id=c.reply_id AND rc.idx=c.idx WHERE c.state='sent' AND c.message_id=? AND json_extract(i.envelope,'$.conversation_id')=?`, message, channel).Scan(&c.ReplyID, &c.Index, &c.Text, &raw, &c.Output, &receipt.State, &receipt.MessageID, &receipt.OutputReceipt, &receipt.Code)
 	if err != nil {
 		return c, receipt, errors.New("operation_target_not_ledger_owned")
 	}

@@ -274,6 +274,10 @@ func TestControlCancellationRevokesClaimsAndPreservesUncertainty(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch state {
+			case "claimed":
+				if r.State != "cancel_requested" || r.Cancellation == nil || r.Cancellation.ExecutionState != "worker_unbound" {
+					t.Fatal(r)
+				}
 			case "sent":
 				if r.State != "delivered" {
 					t.Fatal(r)

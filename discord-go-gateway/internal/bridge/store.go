@@ -254,6 +254,7 @@ CREATE TABLE IF NOT EXISTS chunks(reply_id TEXT NOT NULL REFERENCES replies(id),
 CREATE TABLE IF NOT EXISTS reply_followups(reply_id TEXT NOT NULL REFERENCES replies(id),key TEXT NOT NULL,text TEXT NOT NULL,start_idx INTEGER NOT NULL,chunk_count INTEGER NOT NULL,PRIMARY KEY(reply_id,key));
 CREATE TABLE IF NOT EXISTS reply_output_receipts(reply_id TEXT NOT NULL REFERENCES replies(id),idx INTEGER NOT NULL,receipt TEXT NOT NULL,PRIMARY KEY(reply_id,idx));
 CREATE TABLE IF NOT EXISTS reply_outputs(reply_id TEXT PRIMARY KEY REFERENCES replies(id),payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reply_followup_outputs(reply_id TEXT NOT NULL,idx INTEGER NOT NULL CHECK(idx>0),payload TEXT NOT NULL,PRIMARY KEY(reply_id,idx),FOREIGN KEY(reply_id,idx) REFERENCES chunks(reply_id,idx));
 CREATE TABLE IF NOT EXISTS reply_cancellations(reply_id TEXT PRIMARY KEY REFERENCES replies(id),cancelled_at REAL NOT NULL,code TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS processing(inbound_id TEXT PRIMARY KEY REFERENCES inbound(id),claim TEXT NOT NULL,until REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS consumer_claims(consumer TEXT PRIMARY KEY,inbound_id TEXT NOT NULL REFERENCES inbound(id),claim TEXT NOT NULL);
@@ -268,6 +269,9 @@ CREATE INDEX IF NOT EXISTS chunks_state ON chunks(state,reply_id,idx);
 			return nil, err
 		}
 		if err = initMessageOperations(db); err != nil {
+			return nil, err
+		}
+		if err = initWorkerControl(db); err != nil {
 			return nil, err
 		}
 		if err = initControlStore(db); err != nil {
@@ -402,7 +406,8 @@ const pendingClaimPageSize = 16
 func readPendingClaimPage(db *storeConn, now float64, after *inboundRow) ([]inboundRow, error) {
 	query := `WITH candidates AS MATERIALIZED (
 		SELECT id,created FROM inbound
-		WHERE (state='pending' OR (state='claimed' AND lease_until<=?))`
+		WHERE (state='pending' OR (state='claimed' AND lease_until<=?))
+		AND NOT EXISTS(SELECT 1 FROM worker_bindings b JOIN worker_runtime w ON w.worker=b.worker AND w.incarnation=b.incarnation WHERE b.inbound_id=inbound.id AND b.claim=inbound.claim)`
 	args := []any{now}
 	if after != nil {
 		query += ` AND (created,id)>(?,?)`
@@ -523,7 +528,7 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 						continue
 					}
 					var busy int
-					if err = db.QueryRow("SELECT count(*) FROM inbound WHERE state='claimed' AND lease_until>? AND id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?", now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
+					if err = db.QueryRow("SELECT count(*) FROM inbound WHERE (state='worker_recovery_pending' OR (state='claimed' AND lease_until>?)) AND id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?", now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
 						return nil, err
 					}
 					if busy > 0 {
@@ -751,7 +756,7 @@ func (s *Store) RecoverInterrupted() (int, error) {
 func (s *Store) NextChunk() (*Chunk, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope,CASE WHEN c.idx=0 THEN COALESCE((SELECT payload FROM reply_outputs WHERE reply_id=c.reply_id),'') ELSE '' END FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND i.state!='cancelled' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=c.reply_id) AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state NOT IN ('sent','cancelled') AND (source.state!='cancelled' OR unfinished.state IN ('sending','uncertain')) AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=older.id)) ORDER BY r.created,r.rowid,c.idx`)
+			rows, err := db.Query(`SELECT c.reply_id,c.idx,c.text,i.envelope,` + chunkReplyOutputSQL + ` FROM chunks c JOIN replies r ON r.id=c.reply_id JOIN inbound i ON i.id=r.inbound_id WHERE c.state='pending' AND i.state!='cancelled' AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=c.reply_id) AND NOT EXISTS(SELECT 1 FROM chunks p WHERE p.reply_id=c.reply_id AND p.idx<c.idx AND p.state!='sent') AND NOT EXISTS(SELECT 1 FROM replies older JOIN inbound source ON source.id=older.inbound_id JOIN chunks unfinished ON unfinished.reply_id=older.id WHERE (older.created<r.created OR (older.created=r.created AND older.rowid<r.rowid)) AND source.platform=i.platform AND json_extract(source.envelope,'$.conversation_id')=json_extract(i.envelope,'$.conversation_id') AND unfinished.state NOT IN ('sent','cancelled') AND (source.state!='cancelled' OR unfinished.state IN ('sending','uncertain')) AND NOT EXISTS(SELECT 1 FROM reply_cancellations cancelled WHERE cancelled.reply_id=older.id)) ORDER BY r.created,r.rowid,c.idx`)
 			if err != nil {
 				return nil, err
 			}
@@ -977,16 +982,14 @@ func (s *Store) ResolveSent(id string, index int, messageID string) error {
 	}
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			var structured int
-			if index == 0 {
-				if err := db.QueryRow("SELECT count(*) FROM reply_outputs WHERE reply_id=?", id).Scan(&structured); err != nil {
-					return nil, err
-				}
+			output, err := replyChunkOutputDB(db, id, index)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, err
 			}
-			if structured != 0 {
+			if output != "" {
 				return nil, errors.New("rich_reply_requires_reconcile_reply")
 			}
-			err := changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, id, index))
+			err = changedOne(db.Exec("UPDATE chunks SET state='sent',message_id=?,code='operator_verified' WHERE reply_id=? AND idx=? AND state='uncertain'", messageID, id, index))
 			if err == ErrClaim {
 				err = errors.New("only uncertain chunks can be resolved")
 			}
@@ -1119,6 +1122,11 @@ func (s *Store) Status() (map[string]any, error) {
 				return nil, err
 			}
 			out["consumer"] = consumer
+			workers, err := workerHealthDB(db)
+			if err != nil {
+				return nil, err
+			}
+			out["worker_control"] = workers
 			// A fresh transport or waiting subprocess cannot establish that the
 			// assistant received a tool result or is currently reasoning.
 			pathState := "unverified"

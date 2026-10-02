@@ -93,10 +93,13 @@ func (s *Store) ingestControl(e Envelope, interactionID string) (string, error) 
 }
 
 type ControlRequest struct {
-	ID       string   `json:"id"`
-	Revision string   `json:"revision"`
-	State    string   `json:"state"`
-	Source   Envelope `json:"-"`
+	ID            string              `json:"id"`
+	Revision      string              `json:"revision"`
+	State         string              `json:"state"`
+	Source        Envelope            `json:"-"`
+	DeliveryState string              `json:"delivery_state,omitempty"`
+	Cancellation  *WorkerCancellation `json:"cancellation,omitempty"`
+	Worker        *WorkerStatus       `json:"worker,omitempty"`
 }
 
 func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, error) {
@@ -113,6 +116,19 @@ func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, 
 		return r, errors.New("request_not_found")
 	}
 	r.Revision = controlRevision(r.Source)
+	var worker, incarnation string
+	err = db.QueryRow(`SELECT b.worker,b.incarnation FROM worker_bindings b JOIN inbound i ON i.id=b.inbound_id AND i.claim=b.claim WHERE i.id=?`, id).Scan(&worker, &incarnation)
+	if err == nil {
+		w, e := workerStatusDB(db, worker, epoch())
+		if e != nil {
+			return r, e
+		}
+		if w.Incarnation == incarnation {
+			r.Worker = &w
+		}
+	} else if err != sql.ErrNoRows {
+		return r, err
+	}
 	var reply string
 	err = db.QueryRow("SELECT id FROM replies WHERE inbound_id=?", id).Scan(&reply)
 	if err == nil {
@@ -130,6 +146,7 @@ func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, 
 		if r.State != "cancelled" || d.State == "uncertain" || d.State == "sending" || d.State == "sent" {
 			r.State = d.State
 		}
+		r.DeliveryState = d.State
 	} else if err != sql.ErrNoRows {
 		return r, err
 	}
@@ -141,6 +158,8 @@ func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, 
 		r.State = "unavailable_reissue_required"
 	}
 	switch r.State {
+	case "worker_recovery_pending":
+		r.State = "recovery_required"
 	case "claimed":
 		r.State = "processing"
 	case "replied", "queued":
@@ -149,6 +168,15 @@ func requestStatusDB(db *storeConn, id string, route Envelope) (ControlRequest, 
 		r.State = "delivered"
 	case "ignored":
 		r.State = "cancelled"
+	}
+	c, err := workerCancellationDB(db, id)
+	if err == nil {
+		r.Cancellation = &c
+		if c.State == "cancel_requested" {
+			r.State = "cancel_requested"
+		}
+	} else if err != sql.ErrNoRows {
+		return r, err
 	}
 	return r, nil
 }
@@ -204,8 +232,19 @@ func (s *Store) CancelControlRequest(route Envelope, id, revision string) (Contr
 			if r.Revision != revision {
 				return nil, errors.New("request_revision_changed")
 			}
-			if r.State == "delivered" || r.State == "cancelled" {
+			if r.Cancellation != nil || r.State == "cancelled" {
 				return r, nil
+			}
+			// A completed delivery can still have an explicitly bound native turn.
+			var bound int
+			if err = db.QueryRow("SELECT count(*) FROM worker_bindings b JOIN inbound i ON i.id=b.inbound_id AND i.claim=b.claim WHERE i.id=?", id).Scan(&bound); err != nil {
+				return nil, err
+			}
+			if r.State == "delivered" && bound == 0 {
+				return r, nil
+			}
+			if err = requestWorkerCancellationDB(db, id, revision); err != nil {
+				return nil, err
 			}
 			if _, err = db.Exec("UPDATE inbound SET state='cancelled',claim=NULL,lease_until=NULL WHERE id=?", id); err != nil {
 				return nil, err
@@ -395,7 +434,7 @@ func (s *Store) expireInteractionID(id string) error {
 				return nil, err
 			}
 			var n int
-			err = db.QueryRow("SELECT count(*) FROM inbound i WHERE i.id=? AND (i.state IN ('pending','claimed') OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND c.state!='sent'))", inbound).Scan(&n)
+			err = db.QueryRow("SELECT count(*) FROM inbound i WHERE i.id=? AND (i.state IN ('pending','claimed','worker_recovery_pending') OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND c.state!='sent'))", inbound).Scan(&n)
 			if err != nil || n == 0 {
 				return nil, err
 			}
@@ -409,7 +448,7 @@ func (s *Store) expireInteractionID(id string) error {
 // recent history. A truncated status page must never turn many into "exactly one".
 func (s *Store) activeControlRequests(route Envelope) ([]ControlRequest, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
-		rows, err := db.Query(`SELECT i.id FROM inbound i WHERE json_extract(i.envelope,'$.sender_id')=? AND json_extract(i.envelope,'$.conversation_id')=? AND COALESCE(json_extract(i.envelope,'$.guild_id'),'')=? AND (i.state IN ('pending','claimed') OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND (c.state IN ('sending','uncertain') OR (i.state!='cancelled' AND c.state IN ('pending','failed'))))) ORDER BY i.created LIMIT 2`, route.SenderID, route.ConversationID, route.GuildID)
+		rows, err := db.Query(`SELECT i.id FROM inbound i WHERE json_extract(i.envelope,'$.sender_id')=? AND json_extract(i.envelope,'$.conversation_id')=? AND COALESCE(json_extract(i.envelope,'$.guild_id'),'')=? AND (i.state IN ('pending','claimed','worker_recovery_pending') OR EXISTS(SELECT 1 FROM worker_cancellations wc WHERE wc.inbound_id=i.id AND wc.state='cancel_requested') OR EXISTS(SELECT 1 FROM worker_bindings wb WHERE wb.inbound_id=i.id AND wb.claim=i.claim) OR EXISTS(SELECT 1 FROM replies r JOIN chunks c ON c.reply_id=r.id WHERE r.inbound_id=i.id AND (c.state IN ('sending','uncertain') OR (i.state!='cancelled' AND c.state IN ('pending','failed'))))) ORDER BY i.created LIMIT 2`, route.SenderID, route.ConversationID, route.GuildID)
 		if err != nil {
 			return nil, err
 		}

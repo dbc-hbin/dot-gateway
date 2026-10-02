@@ -216,7 +216,7 @@ func (s *InteractionService) Handle(parent context.Context, i *discordgo.Interac
 			return rejectReply("rejected", "No matching request in this conversation.")
 		}
 		for _, r := range requests {
-			if r.State == "pending" || r.State == "processing" || r.State == "sending" || r.State == "uncertain" || r.State == "failed" {
+			if r.State == "pending" || r.State == "processing" || r.State == "sending" || r.State == "uncertain" || r.State == "failed" || r.State == "cancel_requested" || (r.State == "recovery_required" || r.Worker != nil && !workerStopped(r.Worker.AttestedState)) {
 				if selected != nil {
 					return rejectReply("ambiguous_request", "More than one request is active. Use /status, then cancel an exact request ID.")
 				}
@@ -269,7 +269,15 @@ func (s *InteractionService) Handle(parent context.Context, i *discordgo.Interac
 			return finish("cancel_failed")
 		}
 		text := "Request " + r.ID + ": " + r.State + ". Already sent messages and external actions are unchanged."
-		if r.State == "uncertain" || r.State == "sending" {
+		if r.State == "cancel_requested" {
+			text = "Request " + r.ID + ": cancellation requested; unsent output is suppressed. Worker interruption is not yet acknowledged."
+			if r.Cancellation != nil && r.Cancellation.ExecutionState == "worker_unbound" {
+				text += " No controller binding is known; stopping the worker needs controller reconciliation."
+			}
+			if r.DeliveryState == "uncertain" || r.DeliveryState == "sending" {
+				text += " An in-flight or uncertain delivery remains unresolved."
+			}
+		} else if r.State == "uncertain" || r.State == "sending" {
 			text = "Request " + r.ID + ": cancellation recorded; an in-flight or uncertain delivery is unresolved."
 		}
 		_, state = s.transport.edit(work, i.ID, route.ConversationID, text, nil)
@@ -283,15 +291,25 @@ func (s *InteractionService) Handle(parent context.Context, i *discordgo.Interac
 			_, state = s.transport.edit(work, i.ID, route.ConversationID, "No matching request in this conversation.", nil)
 			return finish("result_" + state)
 		}
-		lines := []string{"Request status (delivery state only):"}
+		lines := []string{"Request status (execution cancellation and delivery):"}
 		components := []any{}
 		for n, r := range requests {
 			if n >= 10 {
 				lines = append(lines, "More requests omitted; use an exact request ID.")
 				break
 			}
-			lines = append(lines, fmt.Sprintf("%s: %s", r.ID, r.State))
-			if len(components) < 5 && (r.State == "pending" || r.State == "processing") {
+			line := fmt.Sprintf("%s: %s", r.ID, r.State)
+			if r.Cancellation != nil {
+				line += "; cancellation=" + r.Cancellation.State + " (" + r.Cancellation.ExecutionState + ")"
+			}
+			if r.Worker != nil {
+				line += "; worker=" + r.Worker.State + " (controller-attested)"
+			}
+			if r.DeliveryState != "" {
+				line += "; delivery=" + r.DeliveryState
+			}
+			lines = append(lines, line)
+			if len(components) < 5 && (r.State == "pending" || r.State == "processing" || r.State == "recovery_required" || r.Worker != nil && !workerStopped(r.Worker.AttestedState)) {
 				b, err := s.store.newBinding(route, "cancel", r.ID, r.Revision, "")
 				if err == nil {
 					components = append(components, map[string]any{"type": 2, "style": 4, "label": "Cancel " + r.ID[:8], "custom_id": b.ID})

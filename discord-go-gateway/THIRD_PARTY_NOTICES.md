@@ -1,10 +1,15 @@
 # Third-party provenance
 
-- Hermes reference: https://github.com/NousResearch/hermes-agent,
-  commit `f42f579cf8bac4918ac9599bece71618afadd846`, MIT, copyright 2025 Nous Research.
-  The original complete source is retained next door in
-  `hermes-dot-gateway/vendor/hermes-agent`; this Go implementation ports only the
-  narrow processing/feedback behavior and does not import or execute that tree.
+- Hermes references: https://github.com/NousResearch/hermes-agent,
+  original bridge reference `f42f579cf8bac4918ac9599bece71618afadd846` and
+  follow-up/worker-control reference `10c6188de188871f64a88dd95bc6b262adb0c307`,
+  MIT, copyright 2025 Nous Research. The latest behavior review covers
+  `plugins/platforms/discord/adapter_media.py`, `gateway/run_turn_runner.py`,
+  `gateway/run_startup.py`, and `gateway/slash_commands.py`. This repository
+  contains original Go adaptations of limited media/lifecycle behavior, not the
+  upstream Python runner. Its external native assistant requires its own
+  controller for actual worker recovery and interruption. The full MIT notice
+  follows; upstream source is not bundled here.
 - DiscordGo `v0.29.1-0.20250705141350-98dc13349786`:
   https://github.com/bwmarrin/discordgo, BSD-3-Clause. Upstream commit
   `98dc1334978683bb0bec263fe809a70e3ec00e91`, with one reviewed Gateway handshake

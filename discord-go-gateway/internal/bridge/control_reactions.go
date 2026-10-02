@@ -49,10 +49,12 @@ func sentControlTargetDB(db *storeConn, channel, message string) (sentControlTar
 	if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='reply_outputs'").Scan(&richSchema); err != nil {
 		return t, err
 	}
-	if richSchema != 0 && t.Index == 0 {
-		if err = db.QueryRow("SELECT COALESCE((SELECT payload FROM reply_outputs WHERE reply_id=?),'')", t.ReplyID).Scan(&t.Output); err != nil {
+	if richSchema != 0 {
+		output, err := replyChunkOutputDB(db, t.ReplyID, t.Index)
+		if err != nil {
 			return t, err
 		}
+		t.Output = string(output)
 		if t.Output != "" {
 			if err = db.QueryRow("SELECT receipt FROM reply_output_receipts WHERE reply_id=? AND idx=?", t.ReplyID, t.Index).Scan(&t.Receipt); err != nil || !json.Valid([]byte(t.Output)) || !json.Valid([]byte(t.Receipt)) {
 				return t, errors.New("reaction_output_receipt_missing")

@@ -18,7 +18,7 @@ func (s *Store) PruneReplySpool() (int, error) {
 	v, e := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
 			keep := map[string]bool{}
-			rows, e := db.Query(`SELECT o.payload FROM reply_outputs o WHERE EXISTS(SELECT 1 FROM chunks c WHERE c.reply_id=o.reply_id AND c.idx=0 AND c.state!='sent')`)
+			rows, e := db.Query(`SELECT o.payload FROM reply_outputs o WHERE EXISTS(SELECT 1 FROM chunks c WHERE c.reply_id=o.reply_id AND c.idx=0 AND c.state!='sent') UNION ALL SELECT o.payload FROM reply_followup_outputs o JOIN chunks c ON c.reply_id=o.reply_id AND c.idx=o.idx WHERE c.state!='sent'`)
 			if e != nil {
 				return nil, e
 			}

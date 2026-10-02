@@ -80,7 +80,7 @@ func run(args []string) int {
 		output(map[string]string{"error": e.Error()})
 		return 2
 	}
-	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "followup": "claim key text-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
+	allowed := map[string]string{"check": "", "run-discord": "", "gateway": "", "status": "", "next": "wait lease-seconds begin processing-seconds consumer-id", "reply": "claim text-file manifest-file", "followup": "claim key text-file manifest-file", "renew": "claim lease-seconds", "begin": "claim lease-seconds", "ignore": "claim", "delivery": "", "retry-failed": "", "cancel-reply": "", "resolve-sent": "chunk message-id verified-in-discord", "test-send-status": ""}
 	allowed["read-message"] = ""
 	allowed["read-history"] = "before limit"
 	allowed["read-pins"] = "before limit"
@@ -107,6 +107,12 @@ func run(args []string) int {
 	allowed["memory-import"] = "sha256"
 	allowed["diagnostic-send"] = "index"
 	allowed["diagnostic-status"] = "index"
+	allowed["worker-register"] = "incarnation controller state lease-seconds previous-incarnation evidence-ref"
+	allowed["worker-observe"] = "incarnation controller state lease-seconds evidence-ref"
+	allowed["worker-bind"] = "claim worker-id incarnation controller evidence-ref"
+	allowed["worker-status"] = ""
+	allowed["worker-cancellations"] = "incarnation controller"
+	allowed["worker-cancel-ack"] = "worker-id incarnation controller evidence-ref"
 	spec, ok := allowed[cmd]
 	if !ok {
 		output(map[string]string{"error": "unsupported_command"})
@@ -120,6 +126,8 @@ func run(args []string) int {
 	}
 	expected := 0
 	switch cmd {
+	case "worker-register", "worker-observe", "worker-bind", "worker-cancellations", "worker-cancel-ack":
+		expected = 1
 	case "recover-thread-message", "read-message":
 		expected = 2
 	case "read-history", "read-pins", "search-messages":
@@ -205,6 +213,9 @@ func run(args []string) int {
 	var result any
 	mutated := false
 	switch cmd {
+	case "worker-register", "worker-observe", "worker-bind", "worker-status", "worker-cancellations", "worker-cancel-ack":
+		result, e = runWorkerControl(cmd, pos, f, store)
+		mutated = e == nil && cmd != "worker-status" && cmd != "worker-cancellations"
 	case "catchup-status":
 		result, e = store.CatchupStatus()
 	case "read-message", "read-history", "read-pins", "search-messages":
@@ -587,7 +598,9 @@ func run(args []string) int {
 		}
 		var id string
 		trace.mark("queue_call_started")
-		if cmd == "followup" {
+		if cmd == "followup" && manifest {
+			id, e = store.QueueFollowupManifest(pos[0], claim, f["key"], data)
+		} else if cmd == "followup" {
 			id, e = store.QueueFollowup(pos[0], claim, f["key"], string(data))
 		} else if manifest {
 			id, e = store.QueueReplyManifest(pos[0], claim, data)
