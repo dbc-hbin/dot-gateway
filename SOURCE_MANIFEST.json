@@ -1768,13 +1768,13 @@
     },
     {
       "path": "recovery/PRIVATE_BACKUP_ALLOWLIST.md",
-      "bytes": 7655,
-      "sha256": "63d268d2f29b70771f9203cde3a42f52099cbf20a109451db57ac0cd05306a27"
+      "bytes": 9605,
+      "sha256": "5c58717e72454b4958e01e5a2d6b18b36a5b2c34b45dc16a681b0c93846e26d1"
     },
     {
       "path": "recovery/README.ko.md",
-      "bytes": 22955,
-      "sha256": "f37b49d7e344d06e2b3b907f2a495de1b418da61ee84a8c1fb31ec37f5ed087c"
+      "bytes": 23732,
+      "sha256": "d11d016123bf8d7d37f72e7193f4393014a27f46a55baea73528ad297cc7a77a"
     },
     {
       "path": "recovery/TOOLCHAIN.lock.json",
@@ -1873,8 +1873,8 @@
     },
     {
       "path": "recovery/phase3_state.go",
-      "bytes": 21889,
-      "sha256": "35518bad2988e590f8f02fe1d7fc8b7d575fa26ff1c071f19df4fca0a1453a3f"
+      "bytes": 22392,
+      "sha256": "48af8c3d5128af5f5fe9ca27339437106a5f969ff72dc837a10ea2db043aee40"
     },
     {
       "path": "recovery/phase3_state_test.go",
@@ -1893,8 +1893,8 @@
     },
     {
       "path": "recovery/state.go",
-      "bytes": 28247,
-      "sha256": "298c6cb178b341423ad86299f3f0edca34398a74ef2082288d2bd6e04f06ecc7"
+      "bytes": 28517,
+      "sha256": "1712500a65256e597a54ceed975a199a094fd3d60c295cdaf0a46cfa7c0016d3"
     },
     {
       "path": "recovery/templates/ACTIVATION.example.json",
@@ -1930,6 +1930,16 @@
       "path": "recovery/templates/proxy.example.json",
       "bytes": 121,
       "sha256": "37d353dec64707438db4007d89af2f9e413ed2bc2ecb85336bab276d77650a0e"
+    },
+    {
+      "path": "recovery/worker_control_state.go",
+      "bytes": 6914,
+      "sha256": "17f6fea4c3f2a12905a2be59de2dd13838b0917c30aeb69667acf7e1d15aca10"
+    },
+    {
+      "path": "recovery/worker_control_state_test.go",
+      "bytes": 8486,
+      "sha256": "1435aa59ae34baeeec4e08da5455bf388141158e2a04f659cf4c9dc518f5dfc0"
     },
     {
       "path": "third-party-notices/CPython-3.12-LICENSE.txt",

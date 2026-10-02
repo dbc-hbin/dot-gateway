@@ -542,6 +542,20 @@ func restorePhase3(tx *sql.Tx, s Snapshot) error {
 // Content-free diagnostics for a verified snapshot; no names, IDs or text.
 func recoveryMetadataCounts(s Snapshot) map[string]int {
 	out := map[string]int{"owned_commands": 0, "registration_attempt_fences": 0, "unresolved_registration_attempts": 0, "interaction_fences": 0, "reaction_fences": 0, "target_invalidations": 0, "reply_cancellations": 0, "cancelled_requests": 0, "inert_rich_receipts": 0, "operation_fences": 0, "held_operation_targets": 0, "unknown_edit_projections": 0, "memory_source_fences": len(s.MemorySources), "memory_document_fences": len(s.MemoryFences)}
+	out["unresolved_worker_requests"] = 0
+	out["worker_recovery_pending"] = 0
+	out["worker_cancellation_fences"] = 0
+	out["pending_worker_cancellations"] = 0
+	if p := s.WorkerControl; p != nil {
+		out["unresolved_worker_requests"] = len(p.UnresolvedRequests)
+		out["worker_recovery_pending"] = len(p.RecoveryPending)
+		out["worker_cancellation_fences"] = len(p.Cancellations)
+		for _, v := range p.Cancellations {
+			if v.State == "cancel_requested" {
+				out["pending_worker_cancellations"]++
+			}
+		}
+	}
 	if p := s.Phase3; p != nil {
 		out["owned_commands"] = len(p.Commands)
 		out["registration_attempt_fences"] = len(p.RegistrationAttempts)

@@ -225,3 +225,13 @@ metadata의 삭제/forget/버전 표식은 이전 메모리 아카이브보다 �
 않습니다. 첨부 정보는 ID/크기뿐인 별도 inert 표식이며 실제 파일/본문/URL/파일명은
 복원하지 않습니다. 모든 복원은 catchup을 disarmed_restore 상태로 유지합니다.
 정확한 포함·제외 목록과 재활성화 한계는 PRIVATE_BACKUP_ALLOWLIST.md를 확인합니다.
+
+## Worker-control 복구 경계
+
+수정된 exporter는 worker의 미해결 실행 요청 ID, 복구 대기 요청 ID, 취소 상태와
+시각만 별도 비활성 메타데이터로 보존합니다. claim·worker/controller 이름·실행 세대·
+증거 본문·lease·원문 prompt는 내보내지 않으며, 복원 후에도 과거 요청은 blocked입니다.
+미해결 실행/취소 수치는 state_counts에서 확인합니다. 이는 worker 자동 재시작이나
+중단 확인이 아닙니다. 새 네이티브 worker를 시작하기 전에 실제 controller가 기존
+실행과 취소를 별도로 확인해야 합니다. VM 복원이나 transport 정상 상태만으로 기존
+클라우드 추론이 끝났다고 판단하거나 취소 ACK를 만들면 안 됩니다.

@@ -119,3 +119,34 @@ The snapshot/verify-state/restore-state result includes content-free state_count
 for registered commands, attempt/interaction/reaction/cancellation fences, inert
 rich receipts, held operation targets, edit projections and memory fences. These
 counts report the verified archive, not running-service or remote-state health.
+
+## Worker-control reconciliation metadata
+
+The optional, versioned `worker_control` block is bound to the exact application,
+guild and owner. It retains only inbound IDs for unresolved executions and
+worker-recovery quarantine, plus cancellation state and request/acknowledgement
+timestamps. Source-revoked NULL queue claims and expired observations do not
+remove an execution marker. Current terminal observations and explicitly retired
+incarnations are not exported as fresh execution authority.
+
+Restore uses only `recovery_worker_execution_fences` and
+`recovery_worker_cancellation_fences`; it never recreates `worker_runtime`,
+`worker_incarnations`, `worker_bindings` or live `worker_cancellations` rows.
+Worker/controller names, incarnation IDs, claim/revision tokens, evidence text,
+leases and prompt bodies are excluded. Pending cancellations stay pending and
+survive re-backup. Aggregate state_counts expose unresolved requests, recovery
+quarantine and pending cancellations without identities or text.
+
+These are inert reconciliation records, not a live worker-control protocol.
+The unchanged gateway does not consume these new tables as execution gates.
+Historical inbound is still blocked and claimless, preventing historical output
+or follow-up replay. Before starting a replacement native worker, the actual
+controller must reconcile any unresolved execution or cancellation in its own
+supported environment. A reset, transport restart, archive restore or expired
+lease does not prove that a cloud-native reasoning turn stopped. This export
+cannot reconstruct that controller or its evidence and must never fabricate ACKs.
+
+Rich follow-ups use the existing per-chunk receipt allowlist, including nonzero
+chunk indexes. Their keys, text, manifests and spool bytes are intentionally
+excluded. Existing deterministic message-operation IDs remain the operation-key
+replay fence; raw operation keys never need to leave the source database.

@@ -112,6 +112,7 @@ type MemoryDocumentFence struct {
 	Forgotten  bool   `json:"forgotten"`
 }
 type Snapshot struct {
+	WorkerControl     *WorkerControlState    `json:"worker_control,omitempty"`
 	MessageOperations *MessageOperationState `json:"message_operations,omitempty"`
 	Phase3            *Phase3State           `json:"phase3,omitempty"`
 	MemorySources     []MemorySourceFence    `json:"memory_sources,omitempty"`
@@ -391,6 +392,9 @@ func snapshotDB(p string, s *Snapshot) error {
 	if e = snapshotMessageOperations(tx, s); e != nil {
 		return e
 	}
+	if e = snapshotWorkerControl(tx, s); e != nil {
+		return e
+	}
 	return tx.Commit()
 }
 func snapshotReports(dir string, s *Snapshot) error {
@@ -455,6 +459,9 @@ func transportEventID(s string) bool {
 	return ok && (snowflakeID(id) || regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) || validReactionTransition(id))
 }
 func validateSnapshot(s Snapshot) error {
+	if err := validateWorkerControl(s); err != nil {
+		return err
+	}
 	if err := validateMessageOperations(s); err != nil {
 		return err
 	}
@@ -670,6 +677,9 @@ func restoreState(s Snapshot, dest string, failAfter int) error {
 			return e
 		}
 		if e = restoreMessageOperations(tx, s); e != nil {
+			return e
+		}
+		if e = restoreWorkerControl(tx, s); e != nil {
 			return e
 		}
 		if e = tx.Commit(); e != nil {
